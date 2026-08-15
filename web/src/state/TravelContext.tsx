@@ -1,13 +1,18 @@
-import { ReactNode, createContext, useContext, useMemo, useState } from "react";
+import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
-import { initialMaps, initialPlaces, initialRoutes, initialVisits, members } from "../data/demo";
-import { Place, Preference, TravelMap, TravelRoute, Visit } from "../types";
+import {
+  createTravelMap,
+  createTravelPlace,
+  createVisit,
+  loadWorkspace,
+  updatePlacePreference,
+  updateTravelPlace,
+  updateTravelRoute
+} from "../api";
+import { initialMaps, initialPlaces, initialRoutes, initialVisits, members as demoMembers } from "../data/demo";
+import { Member, Place, Preference, TravelMap, TravelRoute, Visit } from "../types";
 
-type NewMapInput = {
-  title: string;
-  city: string;
-  subtitle: string;
-};
+type NewMapInput = { title: string; city: string; subtitle: string };
 
 export type NewPlaceInput = {
   name: string;
@@ -26,126 +31,181 @@ type TravelState = {
   places: Place[];
   visits: Visit[];
   routes: TravelRoute[];
-  members: typeof members;
+  members: Member[];
   mapById: (id?: string) => TravelMap | undefined;
   placeById: (id?: string) => Place | undefined;
   placesForMap: (mapId: string) => Place[];
-  setPreference: (placeId: string, preference: Preference) => void;
-  markVisited: (placeId: string, mapId?: string) => void;
-  addMap: (input: NewMapInput) => TravelMap;
-  addPlace: (mapId: string, input: NewPlaceInput) => Place;
-  reorderRouteStop: (routeId: string, index: number, direction: -1 | 1) => void;
+  setPreference: (placeId: string, preference: Preference) => Promise<void>;
+  markVisited: (placeId: string, mapId?: string) => Promise<void>;
+  addMap: (input: NewMapInput) => Promise<TravelMap>;
+  addPlace: (mapId: string, input: NewPlaceInput) => Promise<Place>;
+  updatePlace: (placeId: string, input: { note?: string }) => Promise<void>;
+  recordVisit: (placeId: string, input: { mapId?: string; visitedOn?: string; note?: string; rating?: number }) => Promise<void>;
+  reorderRouteStop: (routeId: string, index: number, direction: -1 | 1) => Promise<void>;
+  refresh: () => Promise<void>;
 };
 
 const TravelContext = createContext<TravelState | null>(null);
+const developmentDemo = import.meta.env.DEV;
 
 export function TravelProvider({ children }: { children: ReactNode }) {
-  const [maps, setMaps] = useState(initialMaps);
-  const [places, setPlaces] = useState(initialPlaces);
-  const [visits, setVisits] = useState(initialVisits);
-  const [routes, setRoutes] = useState(initialRoutes);
+  const [maps, setMaps] = useState<TravelMap[]>(developmentDemo ? initialMaps : []);
+  const [places, setPlaces] = useState<Place[]>(developmentDemo ? initialPlaces : []);
+  const [visits, setVisits] = useState<Visit[]>(developmentDemo ? initialVisits : []);
+  const [routes, setRoutes] = useState<TravelRoute[]>(developmentDemo ? initialRoutes : []);
+  const [members, setMembers] = useState<Member[]>(developmentDemo ? demoMembers : []);
+  const [loading, setLoading] = useState(!developmentDemo);
+  const [error, setError] = useState<string>();
 
-  const value = useMemo<TravelState>(
-    () => ({
-      maps,
-      places,
-      visits,
-      routes,
-      members,
-      mapById: (id) => maps.find((map) => map.id === id),
-      placeById: (id) => places.find((place) => place.id === id),
-      placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)),
-      setPreference: (placeId, preference) =>
-        setPlaces((current) =>
-          current.map((place) => (place.id === placeId ? { ...place, preference } : place))
-        ),
-      markVisited: (placeId, mapId) => {
-        setPlaces((current) =>
-          current.map((place) =>
-            place.id === placeId && !place.visitedBy.includes("me")
-              ? { ...place, visitedBy: [...place.visitedBy, "me"] }
-              : place
-          )
-        );
-        setVisits((current) => {
-          if (current.some((visit) => visit.placeId === placeId && visit.date === "2026-08-15")) {
-            return current;
-          }
-          return [
-            {
-              id: `visit-${placeId}-${Date.now()}`,
-              placeId,
-              date: "2026-08-15",
-              displayDate: "今天",
-              note: "刚刚标记为去过，可继续补充照片和感受。",
-              photoCount: 0,
-              mapId
-            },
-            ...current
-          ];
-        });
-      },
-      addMap: (input) => {
-        const created: TravelMap = {
-          id: `map-${Date.now()}`,
-          title: input.title,
-          subtitle: input.subtitle || "一张新的主题地图",
-          city: input.city,
-          accent: "#7c684a",
-          accentSoft: "#ece3d5",
-          emoji: "行",
-          pointIds: [],
-          members: members.slice(0, 1),
-          completed: 0,
-          updatedAt: "刚刚"
+  const refresh = useCallback(async () => {
+    if (developmentDemo) return;
+    const workspace = await loadWorkspace();
+    setMaps(workspace.maps);
+    setPlaces(workspace.places);
+    setVisits(workspace.visits);
+    setRoutes(workspace.routes);
+    setMembers(workspace.members);
+  }, []);
+
+  useEffect(() => {
+    if (developmentDemo) return;
+    let active = true;
+    loadWorkspace().then((workspace) => {
+      if (!active) return;
+      setMaps(workspace.maps);
+      setPlaces(workspace.places);
+      setVisits(workspace.visits);
+      setRoutes(workspace.routes);
+      setMembers(workspace.members);
+    }).catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : "旅行数据加载失败");
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  const value = useMemo<TravelState>(() => ({
+    maps,
+    places,
+    visits,
+    routes,
+    members,
+    mapById: (id) => maps.find((map) => map.id === id),
+    placeById: (id) => places.find((place) => place.id === id),
+    placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)),
+    setPreference: async (placeId, preference) => {
+      setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, preference } : place));
+      if (!developmentDemo) await updatePlacePreference(placeId, preference);
+    },
+    markVisited: async (placeId, mapId) => {
+      if (developmentDemo) {
+        const visit: Visit = {
+          id: `visit-${placeId}-${Date.now()}`,
+          placeId,
+          date: new Date().toISOString().slice(0, 10),
+          displayDate: "今天",
+          note: "",
+          photoCount: 0,
+          mapId
         };
+        setVisits((current) => [visit, ...current]);
+        setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, visitedBy: ["me"] } : place));
+        return;
+      }
+      await createVisit(placeId, { mapId });
+      await refresh();
+    },
+    addMap: async (input) => {
+      if (!developmentDemo) {
+        const created = await createTravelMap(input);
         setMaps((current) => [created, ...current]);
+        setMembers((current) => current.length ? current : created.members);
         return created;
-      },
-      addPlace: (mapId, input) => {
-        const id = `place-${Date.now()}`;
-        const created: Place = {
-          id,
-          name: input.name,
-          shortName: input.name.length > 8 ? `${input.name.slice(0, 7)}…` : input.name,
-          address: input.address,
-          district: input.district || input.city,
-          city: input.city,
-          category: input.category?.split(";")[0]?.split("|")[0] || "地点",
-          tags: [],
-          note: input.note || "同行备注尚未填写。",
-          coordinate: {
-            x: 25 + Math.abs(input.longitude * 17) % 55,
-            y: 20 + Math.abs(input.latitude * 19) % 60,
-            longitude: input.longitude,
-            latitude: input.latitude
-          },
-          provider: "amap",
-          providerPlaceId: input.providerPlaceId,
-          mapIds: [mapId],
-          visitedBy: [],
-          preference: "none",
-          photos: []
+      }
+      const created: TravelMap = {
+        id: `map-${Date.now()}`,
+        title: input.title,
+        subtitle: input.subtitle || "一张新的主题地图",
+        city: input.city,
+        accent: "#7c684a",
+        accentSoft: "#ece3d5",
+        emoji: "行",
+        pointIds: [],
+        members: demoMembers.slice(0, 1),
+        completed: 0,
+        updatedAt: "刚刚"
+      };
+      setMaps((current) => [created, ...current]);
+      return created;
+    },
+    addPlace: async (mapId, input) => {
+      if (!developmentDemo) {
+        const created = await createTravelPlace(mapId, input);
+        await refresh();
+        return created;
+      }
+      const id = `place-${Date.now()}`;
+      const created: Place = {
+        id,
+        name: input.name,
+        shortName: input.name.length > 8 ? `${input.name.slice(0, 7)}…` : input.name,
+        address: input.address,
+        district: input.district || input.city,
+        city: input.city,
+        category: input.category?.split(";")[0]?.split("|")[0] || "地点",
+        tags: [],
+        note: input.note || "",
+        coordinate: { x: 50, y: 50, longitude: input.longitude, latitude: input.latitude },
+        provider: input.providerPlaceId ? "amap" : "manual",
+        providerPlaceId: input.providerPlaceId,
+        mapIds: [mapId],
+        visitedBy: [],
+        preference: "none",
+        photos: []
+      };
+      setPlaces((current) => [...current, created]);
+      setMaps((current) => current.map((map) => map.id === mapId ? { ...map, pointIds: [...map.pointIds, id], updatedAt: "刚刚" } : map));
+      return created;
+    },
+    updatePlace: async (placeId, input) => {
+      setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, ...input } : place));
+      if (!developmentDemo) await updateTravelPlace(placeId, input);
+    },
+    recordVisit: async (placeId, input) => {
+      if (developmentDemo) {
+        const visit: Visit = {
+          id: `visit-${placeId}-${Date.now()}`,
+          placeId,
+          date: input.visitedOn || new Date().toISOString().slice(0, 10),
+          displayDate: input.visitedOn || "今天",
+          note: input.note || "",
+          rating: input.rating,
+          photoCount: 0,
+          mapId: input.mapId
         };
-        setPlaces((current) => [...current, created]);
-        setMaps((current) => current.map((map) => map.id === mapId ? { ...map, pointIds: [...map.pointIds, id], updatedAt: "刚刚" } : map));
-        return created;
-      },
-      reorderRouteStop: (routeId, index, direction) =>
-        setRoutes((current) =>
-          current.map((route) => {
-            if (route.id !== routeId) return route;
-            const target = index + direction;
-            if (target < 0 || target >= route.stopIds.length) return route;
-            const stopIds = [...route.stopIds];
-            [stopIds[index], stopIds[target]] = [stopIds[target], stopIds[index]];
-            return { ...route, stopIds };
-          })
-        )
-    }),
-    [maps, places, routes, visits]
-  );
+        setVisits((current) => [visit, ...current]);
+        setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, visitedBy: ["me"] } : place));
+        return;
+      }
+      await createVisit(placeId, input);
+      await refresh();
+    },
+    reorderRouteStop: async (routeId, index, direction) => {
+      const route = routes.find((item) => item.id === routeId);
+      if (!route) return;
+      const target = index + direction;
+      if (target < 0 || target >= route.stopIds.length) return;
+      const stopIds = [...route.stopIds];
+      [stopIds[index], stopIds[target]] = [stopIds[target], stopIds[index]];
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
+      if (!developmentDemo) await updateTravelRoute(routeId, stopIds);
+    },
+    refresh
+  }), [maps, members, places, refresh, routes, visits]);
 
+  if (loading) return <div className="app-loading">正在加载你的旅行地图…</div>;
+  if (error) return <div className="app-loading"><strong>{error}</strong><button type="button" onClick={() => window.location.reload()}>重新加载</button></div>;
   return <TravelContext.Provider value={value}>{children}</TravelContext.Provider>;
 }
 

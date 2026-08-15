@@ -10,10 +10,7 @@ import {
   Footprints,
   GripVertical,
   MapPin,
-  MoreHorizontal,
-  Plus,
-  Route as RouteIcon,
-  Sparkles
+  Route as RouteIcon
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -78,7 +75,6 @@ export function RoutePage() {
       <header className="route-header">
         <button className="icon-button" type="button" onClick={() => navigate(`/maps/${route.mapId}`)} aria-label="返回主题地图"><ArrowLeft size={20} /></button>
         <div><span className="eyebrow">{map?.title ?? "主题地图"}</span><h1>{route.title}</h1><p>{route.note}</p></div>
-        <button className="icon-button" type="button" aria-label="更多"><MoreHorizontal size={20} /></button>
       </header>
 
       <div className="route-layout">
@@ -111,9 +107,7 @@ export function RoutePage() {
               </article>
             ))}
           </div>
-          <button className="add-stop-button" type="button"><Plus size={17} /> 从地图中添加一站</button>
           <div className="route-actions">
-            <button className="secondary-button" type="button" onClick={() => { setToast("已生成一个新的顺序草案，确认后才会保存"); window.setTimeout(() => setToast(undefined), 2200); }}><Sparkles size={16} /> 让助手优化顺序</button>
             {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">{mapProvider.label}打开路线 <ExternalLink size={16} /></a> : <button className="primary-button" type="button" onClick={() => { setToast("外部地图跳转暂未配置"); window.setTimeout(() => setToast(undefined), 2200); }}>{mapProvider.label}打开路线 <ExternalLink size={16} /></button>}
           </div>
         </aside>

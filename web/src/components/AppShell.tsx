@@ -1,13 +1,4 @@
-import {
-  Bot,
-  Clock3,
-  Compass,
-  MapPinned,
-  Menu,
-  Route,
-  Settings,
-  X
-} from "lucide-react";
+import { Clock3, Compass, MapPinned, Menu, Settings, X } from "lucide-react";
 import { ReactNode, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
@@ -16,9 +7,7 @@ import { CurrentUser } from "../api";
 const navigation = [
   { to: "/", label: "全局地图", icon: Compass, exact: true },
   { to: "/maps", label: "主题地图", icon: MapPinned },
-  { to: "/visits", label: "到访记录", icon: Clock3 },
-  { to: "/routes/guiyang-day-one", label: "路线", icon: Route },
-  { to: "/assistant", label: "助手", icon: Bot }
+  { to: "/visits", label: "到访记录", icon: Clock3 }
 ];
 
 export function AppShell({
@@ -121,7 +110,7 @@ export function AppShell({
       </div>
 
       <nav className="bottom-nav" aria-label="移动端主导航">
-        {navigation.slice(0, 4).map(({ to, label, icon: Icon, exact }) => (
+        {navigation.map(({ to, label, icon: Icon, exact }) => (
           <NavLink key={to} to={to} end={exact}>
             {({ isActive }) => (
               <>
@@ -131,11 +120,11 @@ export function AppShell({
             )}
           </NavLink>
         ))}
-        <NavLink to="/assistant">
+        <NavLink to="/settings">
           {({ isActive }) => (
             <>
-              <Bot size={21} strokeWidth={isActive ? 2.2 : 1.7} />
-              <span>助手</span>
+              <Settings size={21} strokeWidth={isActive ? 2.2 : 1.7} />
+              <span>设置</span>
             </>
           )}
         </NavLink>

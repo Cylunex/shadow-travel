@@ -2,20 +2,14 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  Copy,
   Filter,
   List,
   LoaderCircle,
   Map as MapIcon,
   MapPin,
-  MoreHorizontal,
   Plus,
   Route,
-  Search,
-  Settings2,
-  Share2,
-  UserPlus,
-  Users
+  Search
 } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -34,6 +28,7 @@ export function ThemeMapPage() {
   const map = mapById(mapId);
   const [selected, setSelected] = useState<Place | undefined>();
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "unvisited" | "want">("all");
   const [view, setView] = useState<"map" | "list">("map");
   const [showAdd, setShowAdd] = useState(false);
   const [toast, setToast] = useState(false);
@@ -45,8 +40,14 @@ export function ThemeMapPage() {
   const [pickingOnMap, setPickingOnMap] = useState(false);
   const places = map ? placesForMap(map.id) : [];
   const visible = useMemo(
-    () => places.filter((place) => `${place.name} ${place.tags.join(" ")}`.includes(query)),
-    [places, query]
+    () => places.filter((place) => {
+      const matchesQuery = `${place.name} ${place.tags.join(" ")}`.includes(query);
+      const matchesFilter = filter === "all" ||
+        (filter === "unvisited" && !place.visitedBy.includes("me")) ||
+        (filter === "want" && ["want", "planned"].includes(place.preference));
+      return matchesQuery && matchesFilter;
+    }),
+    [filter, places, query]
   );
 
   if (!map) {
@@ -64,11 +65,16 @@ export function ThemeMapPage() {
   const activeMapId = map.id;
   const activeMapCity = map.city;
 
-  function mark(place: Place) {
-    markVisited(place.id, activeMapId);
-    setToastMessage("已记录为今天去过，可在地点详情补照片");
-    setToast(true);
-    window.setTimeout(() => setToast(false), 2200);
+  async function mark(place: Place) {
+    try {
+      await markVisited(place.id, activeMapId);
+      setToastMessage("已记录为今天去过，可在地点详情补照片");
+      setToast(true);
+      window.setTimeout(() => setToast(false), 2200);
+    } catch (error) {
+      setToastMessage(error instanceof Error ? error.message : "标记失败");
+      setToast(true);
+    }
   }
 
   async function searchPlaces(event: FormEvent) {
@@ -86,25 +92,33 @@ export function ThemeMapPage() {
     }
   }
 
-  function saveSearchResult(result: AMapSearchResult) {
-    const place = addPlace(activeMapId, {
-      name: result.name,
-      address: result.address,
-      city: result.city || activeMapCity,
-      district: result.district || "",
-      category: result.category,
-      providerPlaceId: result.providerPlaceId,
-      longitude: result.coordinate.longitude,
-      latitude: result.coordinate.latitude
-    });
-    setSelected(place);
-    setShowAdd(false);
-    setPickingOnMap(false);
-    setPlaceQuery("");
-    setSearchResults([]);
-    setToastMessage(`已添加“${place.name}”`);
-    setToast(true);
-    window.setTimeout(() => setToast(false), 2200);
+  async function saveSearchResult(result: AMapSearchResult) {
+    setSearching(true);
+    setSearchError(undefined);
+    try {
+      const place = await addPlace(activeMapId, {
+        name: result.name,
+        address: result.address,
+        city: result.city || activeMapCity,
+        district: result.district || "",
+        category: result.category,
+        providerPlaceId: result.providerPlaceId,
+        longitude: result.coordinate.longitude,
+        latitude: result.coordinate.latitude
+      });
+      setSelected(place);
+      setShowAdd(false);
+      setPickingOnMap(false);
+      setPlaceQuery("");
+      setSearchResults([]);
+      setToastMessage(`已添加“${place.name}”`);
+      setToast(true);
+      window.setTimeout(() => setToast(false), 2200);
+    } catch (error) {
+      setSearchError(error instanceof Error ? error.message : "保存地点失败");
+    } finally {
+      setSearching(false);
+    }
   }
 
   async function chooseMapPoint(coordinate: MapCoordinate) {
@@ -141,11 +155,6 @@ export function ThemeMapPage() {
           <ProgressRing value={progress} label="我的进度" />
           <AvatarStack members={map.members} label={`${map.members.length} 位成员`} />
         </div>
-        <div className="theme-header-actions">
-          <button className="secondary-button" type="button"><UserPlus size={17} /> 邀请同行</button>
-          <button className="icon-button" type="button" aria-label="分享"><Share2 size={18} /></button>
-          <button className="icon-button" type="button" aria-label="更多"><MoreHorizontal size={20} /></button>
-        </div>
       </header>
 
       <div className="theme-tabs-row">
@@ -173,14 +182,14 @@ export function ThemeMapPage() {
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索这张地图" />
           </div>
           <div className="filter-scroll compact-filters">
-            <button className="active" type="button">全部 {places.length}</button>
-            <button type="button">还没去</button>
-            <button type="button">想去</button>
-            <button type="button"><Filter size={14} /></button>
+            <button className={filter === "all" ? "active" : ""} type="button" onClick={() => setFilter("all")}>全部 {places.length}</button>
+            <button className={filter === "unvisited" ? "active" : ""} type="button" onClick={() => setFilter("unvisited")}>还没去</button>
+            <button className={filter === "want" ? "active" : ""} type="button" onClick={() => setFilter("want")}>想去</button>
+            <button type="button" disabled title="更多筛选稍后开放"><Filter size={14} /></button>
           </div>
           <div className="panel-summary">
             <span>按添加时间</span>
-            <button type="button">默认排序 <ChevronDown size={14} /></button>
+            <span>默认排序 <ChevronDown size={14} /></span>
           </div>
           <div className="place-list">
             {visible.map((place) => (
@@ -199,11 +208,6 @@ export function ThemeMapPage() {
         <div className="theme-map-canvas">
           <MapSurface places={visible} selectedId={selected?.id} onSelect={setSelected} city={map.city} onMapClick={pickingOnMap ? chooseMapPoint : undefined} />
           {pickingOnMap && <div className="map-pick-banner"><MapPin size={17} /><span>点击地图选择一个位置</span><button type="button" onClick={() => setPickingOnMap(false)}>取消</button></div>}
-          <div className="map-layer-control">
-            <button type="button" className="active"><span className="legend-dot shared" /> 共享点位</button>
-            <button type="button"><span className="legend-dot mine" /> 我的记录</button>
-            <button type="button"><Users size={15} /> 同行记录</button>
-          </div>
           {selected && (
             <article className="point-drawer">
               <header>
@@ -245,8 +249,6 @@ export function ThemeMapPage() {
             {!searching && searchResults.length === 0 && !searchError && <>
             <div className="add-methods">
               <button type="button" onClick={() => { setShowAdd(false); setPickingOnMap(true); }}><MapIcon size={19} /><span><strong>在地图上选点</strong><small>点击底图后会自动解析地址</small></span></button>
-              <button type="button" onClick={() => setSearchError("请先粘贴地点名称或地址；外部链接解析会在导入模块统一处理。") }><Copy size={19} /><span><strong>粘贴地图链接</strong><small>匹配后再确认，不直接信任链接内容</small></span></button>
-              <button type="button" onClick={() => setSearchError("手动地点也需要名称和坐标，请先在地图上选点。") }><Settings2 size={19} /><span><strong>手动填写</strong><small>保留来源和坐标系说明</small></span></button>
             </div>
             </>}
           </div>

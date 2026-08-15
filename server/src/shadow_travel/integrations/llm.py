@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shadow_sdk import AsyncLLMClient, JsonlUsageSink
+from shadow_sdk import AsyncLLMClient, JsonlUsageSink, LLMConfigError
 
 
 class LLMGatewayNotConfigured(RuntimeError):
@@ -32,13 +32,16 @@ class LLMGateway:
         existing = self._clients.get(alias)
         if existing:
             return existing
-        client = AsyncLLMClient.from_registry(
-            self._registry_path,
-            secrets_dir=self._secrets_dir,
-            app_id="travel",
-            alias=alias,
-            usage_sink=self._usage_sink,
-        )
+        try:
+            client = AsyncLLMClient.from_registry(
+                self._registry_path,
+                secrets_dir=self._secrets_dir,
+                app_id="travel",
+                alias=alias,
+                usage_sink=self._usage_sink,
+            )
+        except (LLMConfigError, OSError) as exc:
+            raise LLMGatewayNotConfigured("Shadow LLM configuration is unavailable") from exc
         self._clients[alias] = client
         return client
 

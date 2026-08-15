@@ -1,4 +1,4 @@
-import { CalendarDays, Camera, ChevronDown, MapPin, Search, Star } from "lucide-react";
+import { Camera, MapPin, Search, Star } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -21,24 +21,21 @@ export function VisitsPage() {
           <h1>到访记录</h1>
           <p>地点可以重复去，记忆也不必被压成一个“去过”开关。</p>
         </div>
-        <button className="primary-button" type="button"><CalendarDays size={18} /> 记录一次到访</button>
       </header>
 
       <section className="visit-stat-strip">
         <div><strong>{visits.length}</strong><span>今年到访</span></div>
         <div><strong>{new Set(visits.map((visit) => visit.placeId)).size}</strong><span>不同地点</span></div>
         <div><strong>{visits.reduce((total, visit) => total + visit.photoCount, 0)}</strong><span>旅行照片</span></div>
-        <div><strong>2</strong><span>同行城市</span></div>
+        <div><strong>{new Set(visits.map((visit) => placeById(visit.placeId)?.city).filter(Boolean)).size}</strong><span>到访城市</span></div>
       </section>
 
       <div className="index-toolbar">
         <div className="search-field wide"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索到访地点" /></div>
-        <button className="filter-button" type="button">2026 年 <ChevronDown size={15} /></button>
-        <button className="filter-button" type="button">全部地图 <ChevronDown size={15} /></button>
       </div>
 
       <section className="timeline">
-        <div className="timeline-month"><span>八月</span><small>2 次到访</small></div>
+        <div className="timeline-month"><span>全部记录</span><small>{visible.length} 次到访</small></div>
         {visible.map((visit, index) => {
           const place = placeById(visit.placeId);
           const map = mapById(visit.mapId);

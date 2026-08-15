@@ -9,18 +9,30 @@ export function MapsPage() {
   const { maps, addMap } = useTravel();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ title: "", city: "", subtitle: "" });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string>();
   const visible = maps.filter((map) =>
+    Boolean(map.archived) === showArchived &&
     `${map.title} ${map.city} ${map.subtitle}`.toLowerCase().includes(query.toLowerCase())
   );
 
-  function createMap(event: FormEvent) {
+  async function createMap(event: FormEvent) {
     event.preventDefault();
     if (!draft.title.trim() || !draft.city.trim()) return;
-    const created = addMap(draft);
-    setShowCreate(false);
-    navigate(`/maps/${created.id}`);
+    setSaving(true);
+    setSaveError(undefined);
+    try {
+      const created = await addMap(draft);
+      setShowCreate(false);
+      navigate(`/maps/${created.id}`);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "创建地图失败");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -42,8 +54,8 @@ export function MapsPage() {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索主题地图" />
         </div>
         <div className="segmented-control">
-          <button type="button" className="active">使用中</button>
-          <button type="button"><Archive size={15} /> 已归档</button>
+          <button type="button" className={!showArchived ? "active" : ""} onClick={() => setShowArchived(false)}>使用中</button>
+          <button type="button" className={showArchived ? "active" : ""} onClick={() => setShowArchived(true)}><Archive size={15} /> 已归档</button>
         </div>
       </div>
 
@@ -128,8 +140,9 @@ export function MapsPage() {
             </label>
             <div className="form-actions">
               <button className="secondary-button" type="button" onClick={() => setShowCreate(false)}>取消</button>
-              <button className="primary-button" type="submit">创建地图</button>
+              <button className="primary-button" type="submit" disabled={saving}>{saving ? "正在创建…" : "创建地图"}</button>
             </div>
+            {saveError && <div className="map-search-error">{saveError}</div>}
           </form>
         </Modal>
       )}

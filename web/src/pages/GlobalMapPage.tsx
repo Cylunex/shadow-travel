@@ -1,13 +1,10 @@
 import {
   Check,
-  ChevronDown,
   Filter,
   List,
   Map as MapIcon,
   Plus,
   Search,
-  Sparkles,
-  Users,
   X
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -114,9 +111,7 @@ export function GlobalMapPage() {
               <strong>{visiblePlaces.length} 个地点</strong>
               <span>来自 {maps.length} 张地图</span>
             </div>
-            <button type="button">
-              离我最近 <ChevronDown size={15} />
-            </button>
+            <span>按添加顺序</span>
           </div>
 
           <div className="place-list">
@@ -145,15 +140,6 @@ export function GlobalMapPage() {
             onSelect={choosePlace}
             city={filter === "all" ? "北京 · 贵阳" : selected?.city ?? "旅行地图"}
           />
-
-          <div className="map-top-tools">
-            <button type="button">
-              <span className="map-color-dot" /> 全部地图 <ChevronDown size={15} />
-            </button>
-            <button type="button">
-              <Users size={16} /> 同行共识
-            </button>
-          </div>
 
           <button className="mobile-list-toggle" type="button" onClick={() => setMobileList(true)}>
             <List size={18} /> {visiblePlaces.length} 个地点
@@ -186,12 +172,6 @@ export function GlobalMapPage() {
             </article>
           )}
         </div>
-      </div>
-
-      <div className="floating-assistant" role="status">
-        <Sparkles size={16} />
-        <span>试试问：哪些地方我还没去？</span>
-        <button type="button" onClick={() => navigate("/assistant")}>问助手</button>
       </div>
 
       <div className="view-switch" aria-label="视图切换">
