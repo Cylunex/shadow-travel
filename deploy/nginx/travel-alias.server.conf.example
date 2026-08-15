@@ -1,0 +1,24 @@
+server {
+    listen 80;
+    server_name travel.example.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 308 https://example.com$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name travel.example.com;
+
+    ssl_certificate REPLACE_WITH_CERTIFICATE_CHAIN;
+    ssl_certificate_key REPLACE_WITH_CERTIFICATE_KEY;
+
+    location / {
+        return 308 https://example.com$request_uri;
+    }
+}

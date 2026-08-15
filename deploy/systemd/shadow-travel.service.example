@@ -1,0 +1,25 @@
+[Unit]
+Description=Shadow Travel API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shadow-travel
+Group=shadow-travel
+WorkingDirectory=/opt/shadow-travel/current/app
+EnvironmentFile=/etc/shadow-travel/travel.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/shadow-travel/current/venv/bin/python -m uvicorn shadow_travel.main:app --host 127.0.0.1 --port ${TRAVEL_PORT} --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shadow-travel
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,66 @@
+import { CalendarDays, Camera, ChevronDown, MapPin, Search, Star } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import { useTravel } from "../state/TravelContext";
+
+export function VisitsPage() {
+  const { visits, placeById, mapById } = useTravel();
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const visible = useMemo(
+    () => visits.filter((visit) => (placeById(visit.placeId)?.name ?? "").includes(query)),
+    [placeById, query, visits]
+  );
+
+  return (
+    <div className="content-page visits-page">
+      <header className="content-header">
+        <div>
+          <span className="eyebrow">VISIT JOURNAL</span>
+          <h1>到访记录</h1>
+          <p>地点可以重复去，记忆也不必被压成一个“去过”开关。</p>
+        </div>
+        <button className="primary-button" type="button"><CalendarDays size={18} /> 记录一次到访</button>
+      </header>
+
+      <section className="visit-stat-strip">
+        <div><strong>{visits.length}</strong><span>今年到访</span></div>
+        <div><strong>{new Set(visits.map((visit) => visit.placeId)).size}</strong><span>不同地点</span></div>
+        <div><strong>{visits.reduce((total, visit) => total + visit.photoCount, 0)}</strong><span>旅行照片</span></div>
+        <div><strong>2</strong><span>同行城市</span></div>
+      </section>
+
+      <div className="index-toolbar">
+        <div className="search-field wide"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索到访地点" /></div>
+        <button className="filter-button" type="button">2026 年 <ChevronDown size={15} /></button>
+        <button className="filter-button" type="button">全部地图 <ChevronDown size={15} /></button>
+      </div>
+
+      <section className="timeline">
+        <div className="timeline-month"><span>八月</span><small>2 次到访</small></div>
+        {visible.map((visit, index) => {
+          const place = placeById(visit.placeId);
+          const map = mapById(visit.mapId);
+          if (!place) return null;
+          return (
+            <article key={visit.id} className="timeline-entry">
+              <time><strong>{visit.displayDate}</strong><span>2026</span></time>
+              <span className="timeline-dot" />
+              <button type="button" onClick={() => navigate(`/places/${place.id}`)}>
+                <div className="timeline-card-top">
+                  <div><span className="eyebrow">{place.city} · {place.category}</span><h2>{place.name}</h2></div>
+                  {map && <span className="map-pill" style={{ "--pill-color": map.accent } as React.CSSProperties}>{map.emoji} {map.title}</span>}
+                </div>
+                <div className="rating-row">{Array.from({ length: visit.rating ?? 0 }).map((_, star) => <Star key={star} size={14} fill="currentColor" />)}</div>
+                <p>{visit.note}</p>
+                <div className="timeline-meta"><span><MapPin size={14} /> {place.district}</span><span><Camera size={14} /> {visit.photoCount} 张照片</span></div>
+              </button>
+              {index === 0 && <span className="latest-label">最近一次</span>}
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
+}

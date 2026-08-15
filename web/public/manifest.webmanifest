@@ -1,0 +1,11 @@
+{
+  "name": "Shadow Travel",
+  "short_name": "Travel",
+  "description": "地图优先的私人旅行与同行协作工具",
+  "lang": "zh-CN",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f4f2eb",
+  "theme_color": "#f4f2eb"
+}

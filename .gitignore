@@ -1,0 +1,48 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Local databases, logs and generated runtime data
+.data/
+*.db
+*.sqlite*
+*.log
+var/
+
+# Frontend output and dependencies
+web/node_modules/
+web/dist/
+web/.vite/
+*.tsbuildinfo
+
+# Secrets and certificates
+secrets/
+private/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.token
+*.secret
+
+# Private operations documentation stays outside the repository
+docs/private/
+docs/operations-private/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
