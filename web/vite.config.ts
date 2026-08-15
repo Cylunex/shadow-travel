@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadEnv } from "vite";
 
-function basePath(): string {
-  const value = process.env.VITE_BASE_PATH?.trim() || "/";
+function basePath(mode: string): string {
+  const value = process.env.VITE_BASE_PATH?.trim() || (mode === "production" ? "travel" : "/");
   const normalized = value.replace(/^\/+|\/+$/g, "");
   if (normalized && !/^[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*$/.test(normalized)) {
     throw new Error("VITE_BASE_PATH must be a URL path such as travel, not a filesystem path");
@@ -40,7 +40,7 @@ function amapConfig(propertiesFile: string | undefined): AMapBuildConfig {
 export default defineConfig(({ mode }) => {
   const environment = loadEnv(mode, process.cwd(), "");
   return {
-    base: basePath(),
+    base: basePath(mode),
     define: {
       __SHADOW_AMAP_CONFIG__: JSON.stringify(amapConfig(environment.AMAP_PROPERTIES_FILE))
     },
