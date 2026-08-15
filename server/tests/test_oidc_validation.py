@@ -9,7 +9,7 @@ import httpx
 import pytest
 from joserfc import jwk, jwt
 
-from shadow_travel.auth.oidc import OIDCClient, OIDCError
+from shadow_travel.auth.oidc import OIDCClient, OIDCError, OIDCMetadata
 from shadow_travel.config import Settings
 
 
@@ -78,4 +78,86 @@ def test_id_token_access_token_hash_is_checked_when_present() -> None:
         asyncio.run(
             client._verify_id_token(token, nonce="expected-nonce", access_token="wrong-token")
         )
+    asyncio.run(http.aclose())
+
+
+def test_exchange_uses_verified_userinfo_groups(tmp_path) -> None:
+    key = jwk.generate_key("RSA", 2048, {"kid": "test-key", "use": "sig", "alg": "RS256"})
+    id_token = _signed_token(key, groups=None)
+    secret_file = tmp_path / "oidc-client-secret"
+    secret_file.write_text("test-client-secret-value", encoding="utf-8")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            return httpx.Response(
+                200,
+                json={"id_token": id_token, "access_token": "opaque-access-token"},
+            )
+        if request.url.path == "/userinfo":
+            assert request.headers["authorization"] == "Bearer opaque-access-token"
+            return httpx.Response(
+                200,
+                json={
+                    "sub": "subject-1",
+                    "preferred_username": "traveler",
+                    "groups": ["travel-users"],
+                },
+            )
+        return httpx.Response(404)
+
+    settings = Settings(
+        environment="test",
+        oidc_client_secret_file=str(secret_file),
+    )
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OIDCClient(settings, http)
+    client._metadata = (
+        time.monotonic() + 300,
+        OIDCMetadata(
+            issuer="https://auth.example.com",
+            authorization_endpoint="https://auth.example.com/authorize",
+            token_endpoint="https://auth.example.com/token",
+            jwks_uri="https://auth.example.com/jwks",
+            userinfo_endpoint="https://auth.example.com/userinfo",
+            end_session_endpoint=None,
+        ),
+    )
+    client._jwks = (time.monotonic() + 300, {"keys": [key.as_dict(private=False)]})
+
+    identity = asyncio.run(
+        client.exchange_and_verify(
+            code="authorization-code",
+            code_verifier="pkce-verifier",
+            nonce="expected-nonce",
+            redirect_uri="https://app.example.com/travel/auth/callback",
+        )
+    )
+
+    assert identity.subject == "subject-1"
+    assert identity.groups == ("travel-users",)
+    asyncio.run(http.aclose())
+
+
+def test_userinfo_subject_must_match_id_token() -> None:
+    settings = Settings(environment="test")
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"sub": "another-subject", "groups": []})
+        )
+    )
+    client = OIDCClient(settings, http)
+    client._metadata = (
+        time.monotonic() + 300,
+        OIDCMetadata(
+            issuer="https://auth.example.com",
+            authorization_endpoint="https://auth.example.com/authorize",
+            token_endpoint="https://auth.example.com/token",
+            jwks_uri="https://auth.example.com/jwks",
+            userinfo_endpoint="https://auth.example.com/userinfo",
+            end_session_endpoint=None,
+        ),
+    )
+
+    with pytest.raises(OIDCError, match="subject does not match"):
+        asyncio.run(client._userinfo(access_token="opaque-token", subject="subject-1"))
     asyncio.run(http.aclose())

@@ -29,6 +29,7 @@ class OIDCMetadata:
     authorization_endpoint: str
     token_endpoint: str
     jwks_uri: str
+    userinfo_endpoint: str
     end_session_endpoint: str | None
 
 
@@ -106,12 +107,23 @@ class OIDCClient:
             raise OIDCError("OIDC token endpoint returned invalid JSON") from exc
         if not isinstance(token, dict) or not isinstance(token.get("id_token"), str):
             raise OIDCError("OIDC token response did not contain an ID token")
+        access_token = token.get("access_token")
+        if not isinstance(access_token, str) or not access_token:
+            raise OIDCError("OIDC token response did not contain an access token")
         claims = await self._verify_id_token(
             token["id_token"],
             nonce=nonce,
-            access_token=token.get("access_token"),
+            access_token=access_token,
         )
-        return VerifiedIdentity.from_verified_claims(claims)
+        userinfo = await self._userinfo(access_token=access_token, subject=str(claims["sub"]))
+        identity_claims = dict(claims)
+        for name in ("preferred_username", "name", "email", "groups"):
+            if name in userinfo:
+                identity_claims[name] = userinfo[name]
+        try:
+            return VerifiedIdentity.from_verified_claims(identity_claims)
+        except ValueError as exc:
+            raise OIDCError("OIDC identity claims are invalid") from exc
 
     async def metadata(self) -> OIDCMetadata:
         now = time.monotonic()
@@ -126,7 +138,12 @@ class OIDCClient:
             raise OIDCError("OIDC discovery is unavailable") from exc
         if not isinstance(payload, dict) or payload.get("issuer") != self._settings.oidc_issuer:
             raise OIDCError("OIDC discovery issuer does not match configuration")
-        required = ("authorization_endpoint", "token_endpoint", "jwks_uri")
+        required = (
+            "authorization_endpoint",
+            "token_endpoint",
+            "jwks_uri",
+            "userinfo_endpoint",
+        )
         if any(not isinstance(payload.get(key), str) for key in required):
             raise OIDCError("OIDC discovery is missing required endpoints")
         for key in required:
@@ -141,10 +158,34 @@ class OIDCClient:
             authorization_endpoint=str(payload["authorization_endpoint"]),
             token_endpoint=str(payload["token_endpoint"]),
             jwks_uri=str(payload["jwks_uri"]),
+            userinfo_endpoint=str(payload["userinfo_endpoint"]),
             end_session_endpoint=end_session,
         )
         self._metadata = (now + 300, metadata)
         return metadata
+
+    async def _userinfo(self, *, access_token: str, subject: str) -> dict[str, Any]:
+        metadata = await self.metadata()
+        try:
+            response = await self._client.get(
+                metadata.userinfo_endpoint,
+                headers={
+                    "accept": "application/json",
+                    "authorization": f"Bearer {access_token}",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OIDCError("OIDC UserInfo endpoint is unavailable") from exc
+        if not isinstance(payload, dict):
+            raise OIDCError("OIDC UserInfo endpoint returned invalid JSON")
+        userinfo_subject = payload.get("sub")
+        if not isinstance(userinfo_subject, str) or not secrets.compare_digest(
+            userinfo_subject, subject
+        ):
+            raise OIDCError("OIDC UserInfo subject does not match the ID token")
+        return payload
 
     async def _verify_id_token(
         self, token: str, *, nonce: str, access_token: object
