@@ -4,15 +4,17 @@ import {
   createTravelMap,
   createTravelPlace,
   createVisit,
+  loadCapabilities,
   loadWorkspace,
   updatePlacePreference,
   updateTravelPlace,
   updateTravelRoute
 } from "../api";
+import { TravelCapabilities } from "../api";
 import { initialMaps, initialPlaces, initialRoutes, initialVisits, members as demoMembers } from "../data/demo";
 import { Member, Place, Preference, TravelMap, TravelRoute, Visit } from "../types";
 
-type NewMapInput = { title: string; city: string; subtitle: string };
+type NewMapInput = { title: string; city: string; subtitle: string; routeEnabled?: boolean };
 
 export type NewPlaceInput = {
   name: string;
@@ -32,6 +34,7 @@ type TravelState = {
   visits: Visit[];
   routes: TravelRoute[];
   members: Member[];
+  capabilities: TravelCapabilities;
   mapById: (id?: string) => TravelMap | undefined;
   placeById: (id?: string) => Place | undefined;
   placesForMap: (mapId: string) => Place[];
@@ -42,11 +45,13 @@ type TravelState = {
   updatePlace: (placeId: string, input: { note?: string }) => Promise<void>;
   recordVisit: (placeId: string, input: { mapId?: string; visitedOn?: string; note?: string; rating?: number }) => Promise<void>;
   reorderRouteStop: (routeId: string, index: number, direction: -1 | 1) => Promise<void>;
+  setRouteMode: (routeId: string, mode: TravelRoute["mode"]) => Promise<void>;
   refresh: () => Promise<void>;
 };
 
 const TravelContext = createContext<TravelState | null>(null);
 const developmentDemo = import.meta.env.DEV;
+const unavailableCapabilities: TravelCapabilities = { media: false, llm: false, international_maps: false };
 
 export function TravelProvider({ children }: { children: ReactNode }) {
   const [maps, setMaps] = useState<TravelMap[]>(developmentDemo ? initialMaps : []);
@@ -54,6 +59,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const [visits, setVisits] = useState<Visit[]>(developmentDemo ? initialVisits : []);
   const [routes, setRoutes] = useState<TravelRoute[]>(developmentDemo ? initialRoutes : []);
   const [members, setMembers] = useState<Member[]>(developmentDemo ? demoMembers : []);
+  const [capabilities, setCapabilities] = useState<TravelCapabilities>(unavailableCapabilities);
   const [loading, setLoading] = useState(!developmentDemo);
   const [error, setError] = useState<string>();
 
@@ -70,13 +76,17 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (developmentDemo) return;
     let active = true;
-    loadWorkspace().then((workspace) => {
+    Promise.all([
+      loadWorkspace(),
+      loadCapabilities().catch(() => unavailableCapabilities)
+    ]).then(([workspace, loadedCapabilities]) => {
       if (!active) return;
       setMaps(workspace.maps);
       setPlaces(workspace.places);
       setVisits(workspace.visits);
       setRoutes(workspace.routes);
       setMembers(workspace.members);
+      setCapabilities(loadedCapabilities);
     }).catch((reason) => {
       if (active) setError(reason instanceof Error ? reason.message : "旅行数据加载失败");
     }).finally(() => {
@@ -91,6 +101,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     visits,
     routes,
     members,
+    capabilities,
     mapById: (id) => maps.find((map) => map.id === id),
     placeById: (id) => places.find((place) => place.id === id),
     placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)),
@@ -131,6 +142,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         accent: "#7c684a",
         accentSoft: "#ece3d5",
         emoji: "行",
+        routeEnabled: input.routeEnabled ?? false,
         pointIds: [],
         members: demoMembers.slice(0, 1),
         completed: 0,
@@ -199,10 +211,14 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       const stopIds = [...route.stopIds];
       [stopIds[index], stopIds[target]] = [stopIds[target], stopIds[index]];
       setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
-      if (!developmentDemo) await updateTravelRoute(routeId, stopIds);
+      if (!developmentDemo) await updateTravelRoute(routeId, { stopIds });
+    },
+    setRouteMode: async (routeId, mode) => {
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, mode } : item));
+      if (!developmentDemo) await updateTravelRoute(routeId, { mode });
     },
     refresh
-  }), [maps, members, places, refresh, routes, visits]);
+  }), [capabilities, maps, members, places, refresh, routes, visits]);
 
   if (loading) return <div className="app-loading">正在加载你的旅行地图…</div>;
   if (error) return <div className="app-loading"><strong>{error}</strong><button type="button" onClick={() => window.location.reload()}>重新加载</button></div>;

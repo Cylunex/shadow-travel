@@ -44,7 +44,7 @@ export function AMapSurface({
         viewMode: "2D",
         zoom: compact ? 13 : 11,
         center: initialCenter(places),
-        mapStyle: "amap://styles/normal",
+        mapStyle: "amap://styles/darkblue",
         showLabel: true
       });
       mapRef.current = map;
@@ -96,11 +96,11 @@ export function AMapSurface({
     const path = routePath?.length ? routePath : routePlaces.map((place) => place.coordinate);
     const line = path.length > 1 ? new AMapApi.Polyline({
       path: path.map((point) => new AMapApi.LngLat(point.longitude, point.latitude)),
-      strokeColor: "#285c4b",
+      strokeColor: "#20d6d2",
       strokeWeight: 6,
       strokeOpacity: .82,
       borderWeight: 2,
-      outlineColor: "#ffffff",
+      outlineColor: "#05222d",
       lineJoin: "round",
       lineCap: "round",
       showDir: true,

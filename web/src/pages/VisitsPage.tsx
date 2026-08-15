@@ -1,4 +1,4 @@
-import { Camera, MapPin, Search, Star } from "lucide-react";
+import { Camera, MapPin, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -49,7 +49,7 @@ export function VisitsPage() {
                   <div><span className="eyebrow">{place.city} · {place.category}</span><h2>{place.name}</h2></div>
                   {map && <span className="map-pill" style={{ "--pill-color": map.accent } as React.CSSProperties}>{map.emoji} {map.title}</span>}
                 </div>
-                <div className="rating-row">{Array.from({ length: visit.rating ?? 0 }).map((_, star) => <Star key={star} size={14} fill="currentColor" />)}</div>
+                {visit.rating && <span className="personal-rating">个人感受 {visit.rating}/5</span>}
                 <p>{visit.note}</p>
                 <div className="timeline-meta"><span><MapPin size={14} /> {place.district}</span><span><Camera size={14} /> {visit.photoCount} 张照片</span></div>
               </button>

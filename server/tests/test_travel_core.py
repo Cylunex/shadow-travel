@@ -36,7 +36,12 @@ def test_travel_map_place_visit_and_route_are_persistent(settings_factory) -> No
         created_map = client.post(
             "/api/browser/v1/travel-maps",
             headers=headers,
-            json={"title": "北京公园年票", "city": "北京", "subtitle": "逐个打卡"},
+            json={
+                "title": "北京公园年票",
+                "city": "北京",
+                "subtitle": "逐个打卡",
+                "route_enabled": True,
+            },
         )
         assert created_map.status_code == 201
         map_id = created_map.json()["id"]

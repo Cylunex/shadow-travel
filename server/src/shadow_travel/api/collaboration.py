@@ -302,7 +302,11 @@ def remove_member(
             session,
             request,
             user,
-            action="travel.member.remove" if member_id != user.shadow_user_id else "travel.member.leave",
+            action=(
+                "travel.member.remove"
+                if member_id != user.shadow_user_id
+                else "travel.member.leave"
+            ),
             resource_type="travel_map",
             resource_id=map_id,
             details={"member_id": member_id},
@@ -439,7 +443,10 @@ def review_agent_draft(
         if role == "viewer":
             raise HTTPException(status_code=403, detail={"code": "travel_map_read_only"})
         if draft.status != "pending" and draft.status != body.status:
-            raise HTTPException(status_code=409, detail={"code": "travel_agent_draft_already_reviewed"})
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "travel_agent_draft_already_reviewed"},
+            )
         draft.status = body.status
         draft.reviewed_by = user.shadow_user_id
         draft.reviewed_at = datetime.now(UTC)
@@ -491,7 +498,10 @@ def apply_agent_draft(
         try:
             payload = RouteDraftPayload.model_validate(draft.payload)
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail={"code": "travel_agent_draft_invalid"}) from exc
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "travel_agent_draft_invalid"},
+            ) from exc
         _validate_route_places(session, draft.map_id, payload.ordered_place_ids)
         route = TravelRoute(
             map_id=draft.map_id,
@@ -556,7 +566,9 @@ def _agent_draft_payload(draft: TravelAgentDraft) -> dict[str, object]:
 def _valid_agent_id(value: str) -> bool:
     if not 2 <= len(value) <= 64 or not value[0].islower():
         return False
-    return all(character.islower() or character.isdigit() or character == "-" for character in value)
+    return all(
+        character.islower() or character.isdigit() or character == "-" for character in value
+    )
 
 
 def _token_hash(token: str) -> str:

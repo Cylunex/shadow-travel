@@ -144,7 +144,11 @@ def create_photo_upload(
         upload_id = upload.get("upload_id")
         expires_at = upload.get("expires_at")
         target = upload.get("target")
-        if not isinstance(upload_id, str) or not isinstance(expires_at, str) or not isinstance(target, dict):
+        if (
+            not isinstance(upload_id, str)
+            or not isinstance(expires_at, str)
+            or not isinstance(target, dict)
+        ):
             raise HTTPException(status_code=502, detail={"code": "media_invalid_response"})
         intent = TravelMediaUploadIntent(
             media_upload_id=upload_id,

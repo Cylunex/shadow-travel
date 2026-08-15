@@ -32,7 +32,7 @@ type RouteMode = "walking" | "transit" | "driving" | "bicycling";
 
 export function RoutePage() {
   const { routeId } = useParams();
-  const { routes, mapById, placeById, reorderRouteStop } = useTravel();
+  const { routes, mapById, placeById, reorderRouteStop, setRouteMode } = useTravel();
   const navigate = useNavigate();
   const route = routes.find((item) => item.id === routeId);
   const [mode, setMode] = useState<RouteMode>(route?.mode ?? "walking");
@@ -86,7 +86,7 @@ export function RoutePage() {
           </div>
           <div className="mode-switch">
             {modes.map(({ value, label, icon: Icon }) => (
-              <button key={value} type="button" className={mode === value ? "active" : ""} onClick={() => setMode(value as RouteMode)}>
+              <button key={value} type="button" className={mode === value ? "active" : ""} onClick={() => { setMode(value as RouteMode); void setRouteMode(route.id, value as RouteMode).catch((error) => { setToast(error instanceof Error ? error.message : "出行方式保存失败"); }); }}>
                 <Icon size={17} /> {label}
               </button>
             ))}
@@ -108,7 +108,7 @@ export function RoutePage() {
             ))}
           </div>
           <div className="route-actions">
-            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">{mapProvider.label}打开路线 <ExternalLink size={16} /></a> : <button className="primary-button" type="button" onClick={() => { setToast("外部地图跳转暂未配置"); window.setTimeout(() => setToast(undefined), 2200); }}>{mapProvider.label}打开路线 <ExternalLink size={16} /></button>}
+            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">在{mapProvider.label}中打开 <ExternalLink size={16} /></a> : <button className="primary-button" type="button" onClick={() => { setToast("外部地图跳转暂未配置"); window.setTimeout(() => setToast(undefined), 2200); }}>在{mapProvider.label}中打开 <ExternalLink size={16} /></button>}
           </div>
         </aside>
         <main className="route-map-area">

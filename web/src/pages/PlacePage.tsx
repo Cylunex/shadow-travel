@@ -6,17 +6,20 @@ import {
   Clock3,
   ExternalLink,
   Heart,
+  ImagePlus,
+  LoaderCircle,
   MapPin,
   Navigation,
   Pencil,
-  Star,
+  ShieldCheck,
   Users
 } from "lucide-react";
-import { FormEvent, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { MapSurface } from "../components/MapSurface";
 import { AvatarStack, EmptyState, Modal, Toast } from "../components/Shared";
+import { PhotoRecord, loadPhotoUrl, loadPlacePhotos, uploadPlacePhoto } from "../api";
 import { mapProviderForCountry } from "../map/provider";
 import { useTravel } from "../state/TravelContext";
 import { Preference } from "../types";
@@ -30,7 +33,7 @@ const preferenceLabels: { value: Preference; label: string }[] = [
 
 export function PlacePage() {
   const { placeId } = useParams();
-  const { placeById, maps, visits, members, setPreference, markVisited, updatePlace, recordVisit } = useTravel();
+  const { placeById, maps, visits, members, capabilities, setPreference, markVisited, updatePlace, recordVisit } = useTravel();
   const navigate = useNavigate();
   const place = placeById(placeId);
   const [toast, setToast] = useState<string>();
@@ -43,8 +46,30 @@ export function PlacePage() {
     rating: "5"
   });
   const [saving, setSaving] = useState(false);
+  const [photos, setPhotos] = useState<Array<{ record: PhotoRecord; url: string }>>([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const activePlace = place;
+  const activeMapId = activePlace?.mapIds[0];
 
-  if (!place) {
+  const refreshPhotos = useCallback(async () => {
+    if (!capabilities.media || !activePlace || !activeMapId) return;
+    setPhotosLoading(true);
+    try {
+      const records = await loadPlacePhotos(activeMapId, activePlace.id);
+      const resolved = await Promise.all(records.map(async (record) => ({ record, url: await loadPhotoUrl(record.id) })));
+      setPhotos(resolved);
+    } catch {
+      setPhotos([]);
+    } finally {
+      setPhotosLoading(false);
+    }
+  }, [activeMapId, activePlace, capabilities.media]);
+
+  useEffect(() => { void refreshPhotos(); }, [refreshPhotos]);
+
+  if (!activePlace) {
     return (
       <div className="content-page">
         <EmptyState icon={<MapPin />} title="没有找到这个地点">
@@ -54,12 +79,12 @@ export function PlacePage() {
     );
   }
 
-  const activePlace = place;
-  const placeMaps = maps.filter((map) => place.mapIds.includes(map.id));
-  const placeVisits = visits.filter((visit) => visit.placeId === place.id);
-  const visited = place.visitedBy.includes("me");
+  const placeData = activePlace;
+  const placeMaps = maps.filter((map) => placeData.mapIds.includes(map.id));
+  const placeVisits = visits.filter((visit) => visit.placeId === placeData.id);
+  const visited = placeData.visitedBy.includes("me");
   const mapProvider = mapProviderForCountry();
-  const externalMapUrl = mapProvider.externalPlaceUrl(place);
+  const externalMapUrl = mapProvider.externalPlaceUrl(placeData);
 
   function notify(message: string) {
     setToast(message);
@@ -70,7 +95,7 @@ export function PlacePage() {
     event.preventDefault();
     setSaving(true);
     try {
-      await updatePlace(activePlace.id, { note: noteDraft });
+      await updatePlace(placeData.id, { note: noteDraft });
       setEditingNote(false);
       notify("备注已保存");
     } catch (error) {
@@ -84,8 +109,8 @@ export function PlacePage() {
     event.preventDefault();
     setSaving(true);
     try {
-      await recordVisit(activePlace.id, {
-        mapId: activePlace.mapIds[0],
+      await recordVisit(placeData.id, {
+        mapId: placeData.mapIds[0],
         visitedOn: visitDraft.visitedOn,
         note: visitDraft.note,
         rating: Number(visitDraft.rating)
@@ -97,6 +122,23 @@ export function PlacePage() {
       notify(error instanceof Error ? error.message : "到访记录保存失败");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const mapId = placeData.mapIds[0];
+    event.target.value = "";
+    if (!file || !mapId) return;
+    setPhotoUploading(true);
+    try {
+      await uploadPlacePhoto(mapId, placeData.id, file);
+      await refreshPhotos();
+      notify("照片已保存为私密内容");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "照片上传失败");
+    } finally {
+      setPhotoUploading(false);
     }
   }
 
@@ -129,11 +171,13 @@ export function PlacePage() {
         <main className="place-main-column">
           <section className="place-hero-card">
             <div className="photo-mosaic">
-              {(place.photos.length ? place.photos : ["等待第一张照片"]).map((photo, index) => (
-                <div key={photo} className={`photo-tile photo-${index + 1}`}>
-                  <span>{photo}</span>
-                </div>
-              ))}
+              {photos.map(({ record, url }, index) => <figure key={record.id} className={`photo-tile photo-${index + 1}`}><img src={url} alt={record.caption || `${place.name}的旅行照片`} />{record.caption && <figcaption>{record.caption}</figcaption>}</figure>)}
+              {!photos.length && <div className="photo-empty"><span>{place.category.slice(0, 1) || "旅"}</span><strong>{photosLoading ? "正在读取照片…" : capabilities.media ? "留下这里的第一张照片" : "照片能力尚未配置"}</strong><small>{capabilities.media ? "原始 EXIF 与 GPS 会在媒体中心清理" : "配置 Shadow Media 后即可在这里上传私密照片"}</small></div>}
+            </div>
+            <div className="photo-toolbar">
+              <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadPhoto} hidden />
+              <span><ShieldCheck size={15} /> 照片默认私密，仅相关地图成员可见</span>
+              {capabilities.media && <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={photoUploading}>{photoUploading ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}{photoUploading ? "上传中…" : "上传照片"}</button>}
             </div>
           </section>
 
@@ -166,9 +210,7 @@ export function PlacePage() {
                   <article key={visit.id}>
                     <span className="visit-date-badge">{visit.displayDate}</span>
                     <div>
-                      <div className="rating-row">
-                        {Array.from({ length: visit.rating ?? 0 }).map((_, index) => <Star key={index} size={14} fill="currentColor" />)}
-                      </div>
+                      {visit.rating && <span className="personal-rating">个人感受 {visit.rating}/5</span>}
                       <p>{visit.note}</p>
                       <small><Camera size={14} /> {visit.photoCount} 张照片 · 默认仅相关地图成员可见</small>
                     </div>
@@ -212,7 +254,7 @@ export function PlacePage() {
                 </button>
               ))}
             </div>
-            <div className="consensus-line"><AvatarStack members={members} /><span>2 人想去 · 1 人未标记</span></div>
+            {members.length > 1 && <div className="consensus-line"><AvatarStack members={members} /><span>同行人分别保存自己的意愿和到访</span></div>}
           </section>
 
           <section className="side-card map-mini-card">

@@ -29,6 +29,20 @@ def me(user: Annotated[AuthenticatedUser, Depends(current_browser_user)]) -> dic
     }
 
 
+@router.get("/capabilities")
+def capabilities(
+    request: Request,
+    _user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
+) -> dict[str, bool]:
+    """Expose safe feature flags without leaking service locations or credentials."""
+    settings = request.app.state.settings
+    return {
+        "media": bool(settings.media_base_url and settings.media_service_token_file),
+        "llm": bool(settings.llm_registry_path and settings.llm_secrets_dir),
+        "international_maps": bool(settings.google_maps_server_key_file),
+    }
+
+
 @router.get("/maps/places")
 async def search_places(
     request: Request,

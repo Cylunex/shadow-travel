@@ -5,8 +5,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
 from shadow_sdk import LLMRequestError
+from sqlalchemy import func, select
 
 from shadow_travel.api.travel import _editable_map
 from shadow_travel.auth.dependencies import current_browser_user

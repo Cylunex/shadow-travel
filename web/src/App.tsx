@@ -4,7 +4,6 @@ import { Route, Routes } from "react-router-dom";
 
 import { CurrentUser, currentUser } from "./api";
 import { AppShell } from "./components/AppShell";
-import { AssistantPage } from "./pages/AssistantPage";
 import { GlobalMapPage } from "./pages/GlobalMapPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MapsPage } from "./pages/MapsPage";
@@ -43,7 +42,7 @@ export function App() {
   if (session.kind === "anonymous") return <LoginPage />;
   if (session.kind === "error") return <LoginPage unavailable />;
 
-  return <TravelProvider><AppShell user={session.user} demo={session.demo}><Routes><Route path="/" element={<GlobalMapPage />} /><Route path="/maps" element={<MapsPage />} /><Route path="/maps/:mapId" element={<ThemeMapPage />} /><Route path="/places/:placeId" element={<PlacePage />} /><Route path="/visits" element={<VisitsPage />} /><Route path="/routes/:routeId" element={<RoutePage />} /><Route path="/assistant" element={<AssistantPage />} /><Route path="/settings" element={<SettingsPage user={session.user} demo={session.demo} />} /><Route path="*" element={<NotFoundPage />} /></Routes></AppShell></TravelProvider>;
+  return <TravelProvider><AppShell user={session.user} demo={session.demo}><Routes><Route path="/" element={<GlobalMapPage />} /><Route path="/maps" element={<MapsPage />} /><Route path="/maps/:mapId" element={<ThemeMapPage />} /><Route path="/places/:placeId" element={<PlacePage />} /><Route path="/visits" element={<VisitsPage />} /><Route path="/routes/:routeId" element={<RoutePage />} /><Route path="/settings" element={<SettingsPage user={session.user} demo={session.demo} />} /><Route path="*" element={<NotFoundPage />} /></Routes></AppShell></TravelProvider>;
 }
 
 const demoUser: CurrentUser = { shadow_user_id: "demo-user", username: "demo", display_name: "小影", email: "demo@example.com" };

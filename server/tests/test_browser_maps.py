@@ -115,3 +115,15 @@ def test_browser_route_endpoint_is_provider_neutral(settings_factory) -> None:
     assert response.status_code == 200
     assert response.json()["provider"] == "fake-map"
     assert response.json()["distance_meters"] == 1200
+
+
+def test_browser_capabilities_expose_only_safe_feature_flags(settings_factory) -> None:
+    with _client(settings_factory) as client:
+        response = client.get("/api/browser/v1/capabilities")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "media": False,
+        "llm": False,
+        "international_maps": False,
+    }

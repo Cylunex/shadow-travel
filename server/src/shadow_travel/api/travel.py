@@ -95,7 +95,9 @@ class PlaceUpdate(BaseModel):
     def validate_coordinate_pair(self) -> PlaceUpdate:
         longitude_set = "longitude" in self.model_fields_set
         latitude_set = "latitude" in self.model_fields_set
-        if longitude_set != latitude_set or (longitude_set and (self.longitude is None or self.latitude is None)):
+        if longitude_set != latitude_set or (
+            longitude_set and (self.longitude is None or self.latitude is None)
+        ):
             raise ValueError("longitude and latitude must be updated together")
         return self
 

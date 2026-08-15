@@ -20,6 +20,7 @@ export type TravelMap = {
   members: Member[];
   completed: number;
   period?: string;
+  routeEnabled?: boolean;
   updatedAt: string;
   archived?: boolean;
 };
@@ -61,7 +62,7 @@ export type TravelRoute = {
   id: string;
   mapId: string;
   title: string;
-  mode: "walking" | "driving" | "transit";
+  mode: "walking" | "driving" | "transit" | "bicycling";
   stopIds: string[];
   distance: string;
   duration: string;

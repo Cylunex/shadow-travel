@@ -17,6 +17,46 @@ export type TravelWorkspace = {
   members: TravelMap["members"];
 };
 
+export type TravelCapabilities = {
+  media: boolean;
+  llm: boolean;
+  international_maps: boolean;
+};
+
+export type RouteDraft = {
+  id: string;
+  map_id: string;
+  status: string;
+  draft_type: "route";
+  payload: {
+    title: string;
+    ordered_place_ids: string[];
+    summary: string;
+    stop_notes: Array<{ place_id: string; note: string }>;
+    mode: TravelRoute["mode"];
+    requested_goal: string;
+  };
+};
+
+export type PhotoRecord = {
+  id: string;
+  media_id: string;
+  map_id: string;
+  place_id: string;
+  visit_id?: string;
+  caption: string;
+  captured_at?: string;
+  has_private_location: boolean;
+  exif_policy: "strip_all";
+  created_at: string;
+};
+
+export type CollaborationState = {
+  my_role: "owner" | "editor" | "viewer";
+  members: Array<{ id: string; name: string; username: string; role: "owner" | "editor" | "viewer"; joined_at: string }>;
+  invitations: Array<{ id: string; map_id: string; role: "editor" | "viewer"; expires_at: string }>;
+};
+
 export async function currentUser(signal?: AbortSignal): Promise<CurrentUser | null> {
   const response = await fetch(`${basePath}api/browser/v1/me`, {
     credentials: "same-origin",
@@ -47,14 +87,19 @@ export async function loadWorkspace(signal?: AbortSignal): Promise<TravelWorkspa
   return request<TravelWorkspace>("api/browser/v1/workspace", { signal });
 }
 
+export async function loadCapabilities(signal?: AbortSignal): Promise<TravelCapabilities> {
+  return request<TravelCapabilities>("api/browser/v1/capabilities", { signal });
+}
+
 export async function createTravelMap(input: {
   title: string;
   city: string;
   subtitle: string;
+  routeEnabled?: boolean;
 }): Promise<TravelMap> {
   return request<TravelMap>("api/browser/v1/travel-maps", {
     method: "POST",
-    body: JSON.stringify(input)
+    body: JSON.stringify({ ...input, route_enabled: input.routeEnabled ?? false })
   });
 }
 
@@ -116,10 +161,90 @@ export async function createVisit(placeId: string, input: {
   });
 }
 
-export async function updateTravelRoute(routeId: string, stopIds: string[]): Promise<TravelRoute> {
+export async function updateTravelRoute(
+  routeId: string,
+  input: { stopIds?: string[]; mode?: TravelRoute["mode"] }
+): Promise<TravelRoute> {
   return request<TravelRoute>(`api/browser/v1/routes/${routeId}`, {
     method: "PATCH",
-    body: JSON.stringify({ stop_ids: stopIds })
+    body: JSON.stringify({ stop_ids: input.stopIds, mode: input.mode })
+  });
+}
+
+export async function createAssistantRouteDraft(
+  mapId: string,
+  input: { goal: string; mode: TravelRoute["mode"]; maxStops?: number }
+): Promise<RouteDraft> {
+  return request<RouteDraft>(`api/browser/v1/travel-maps/${mapId}/assistant/route-drafts`, {
+    method: "POST",
+    body: JSON.stringify({ goal: input.goal, mode: input.mode, max_stops: input.maxStops ?? 8 })
+  });
+}
+
+export async function applyAgentDraft(draftId: string): Promise<{ draft: RouteDraft; route: TravelRoute }> {
+  return request<{ draft: RouteDraft; route: TravelRoute }>(`api/browser/v1/agent-drafts/${draftId}/apply`, {
+    method: "POST"
+  });
+}
+
+export async function loadPlacePhotos(mapId: string, placeId: string): Promise<PhotoRecord[]> {
+  const payload = await request<{ photos: PhotoRecord[] }>(`api/browser/v1/travel-maps/${mapId}/places/${placeId}/photos`);
+  return payload.photos;
+}
+
+export async function loadPhotoUrl(photoId: string): Promise<string> {
+  const payload = await request<{ url: string }>(`api/browser/v1/photos/${photoId}/access`, { method: "POST" });
+  return payload.url;
+}
+
+export async function uploadPlacePhoto(
+  mapId: string,
+  placeId: string,
+  file: File,
+  caption = ""
+): Promise<PhotoRecord> {
+  const upload = await request<{
+    intent_id: string;
+    target: { method?: string; url: string; headers?: Record<string, string> };
+  }>(`api/browser/v1/travel-maps/${mapId}/places/${placeId}/photos/uploads`, {
+    method: "POST",
+    body: JSON.stringify({
+      original_filename: file.name,
+      content_type: file.type,
+      size_bytes: file.size,
+      caption
+    })
+  });
+  const targetResponse = await fetch(upload.target.url, {
+    method: upload.target.method || "PUT",
+    headers: upload.target.headers,
+    body: file
+  });
+  if (!targetResponse.ok) throw new Error(`图片上传失败：HTTP ${targetResponse.status}`);
+  return request<PhotoRecord>(`api/browser/v1/travel-maps/${mapId}/places/${placeId}/photos/complete`, {
+    method: "POST",
+    body: JSON.stringify({ intent_id: upload.intent_id })
+  });
+}
+
+export async function loadCollaboration(mapId: string): Promise<CollaborationState> {
+  return request<CollaborationState>(`api/browser/v1/travel-maps/${mapId}/collaboration`);
+}
+
+export async function createMapInvitation(
+  mapId: string,
+  role: "editor" | "viewer" = "editor"
+): Promise<{ id: string; token: string; expires_at: string; role: string }> {
+  return request(`api/browser/v1/travel-maps/${mapId}/invitations`, {
+    method: "POST",
+    body: JSON.stringify({ role, expires_in_days: 7 })
+  });
+}
+
+export async function acceptMapInvitation(token: string): Promise<{ map_id: string }> {
+  return request<{ map_id: string }>("api/browser/v1/invitations/accept", {
+    method: "POST",
+    body: JSON.stringify({ token })
   });
 }
 

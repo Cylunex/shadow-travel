@@ -17,6 +17,7 @@ export const initialMaps: TravelMap[] = [
     emoji: "园",
     pointIds: ["tiantan", "beihai", "jingshan", "taoranting", "zoo", "xiangshan"],
     members: members.slice(0, 2),
+    routeEnabled: false,
     completed: 3,
     period: "2026.01.01 — 2027.01.31",
     updatedAt: "今天 10:24"
@@ -31,6 +32,7 @@ export const initialMaps: TravelMap[] = [
     emoji: "味",
     pointIds: ["changwang", "qingyun", "laokaili", "siwawa", "hequn"],
     members,
+    routeEnabled: true,
     completed: 2,
     updatedAt: "昨天 21:08"
   },
@@ -44,6 +46,7 @@ export const initialMaps: TravelMap[] = [
     emoji: "展",
     pointIds: ["capital-museum", "moma"],
     members: members.slice(0, 1),
+    routeEnabled: false,
     completed: 1,
     updatedAt: "8 月 12 日"
   }

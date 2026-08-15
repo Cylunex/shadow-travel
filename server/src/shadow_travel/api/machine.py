@@ -7,9 +7,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
+from shadow_sdk.agent import AgentIdentity
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from shadow_sdk.agent import AgentIdentity
 
 from shadow_travel.infrastructure.models import (
     AgentIdempotencyKey,
@@ -94,6 +94,14 @@ def agent_capabilities(
     exposed_scopes = {
         "travel.maps.read": "maps.read",
         "travel.drafts.create": "drafts.create",
+    }
+    return {
+        "agent_id": identity.agent_id,
+        "audience": identity.audience,
+        "capabilities": [
+            capability for scope, capability in exposed_scopes.items() if scope in identity.scopes
+        ],
+        "direct_domain_writes": False,
     }
 
 
@@ -232,7 +240,10 @@ def create_agent_draft(
             if existing.request_hash != request_hash:
                 raise HTTPException(status_code=409, detail={"code": "idempotency_key_reused"})
             if existing.response_json is None:
-                raise HTTPException(status_code=409, detail={"code": "idempotency_request_in_progress"})
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "idempotency_request_in_progress"},
+                )
             return existing.response_json
         record = AgentIdempotencyKey(
             agent_id=identity.agent_id,
@@ -277,14 +288,6 @@ def create_agent_draft(
             )
         )
         return response
-    return {
-        "agent_id": identity.agent_id,
-        "audience": identity.audience,
-        "capabilities": [
-            capability for scope, capability in exposed_scopes.items() if scope in identity.scopes
-        ],
-        "direct_domain_writes": False,
-    }
 
 
 @router.get("/sync/ping")

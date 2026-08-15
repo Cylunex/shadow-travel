@@ -1,19 +1,22 @@
-import { Archive, ArrowRight, MapPinned, Plus, Search, Users } from "lucide-react";
+import { Archive, ArrowRight, KeyRound, MapPinned, Plus, Route, Search, Users } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { AvatarStack, Modal, ProgressRing } from "../components/Shared";
+import { acceptMapInvitation } from "../api";
 import { useTravel } from "../state/TravelContext";
 
 export function MapsPage() {
-  const { maps, addMap } = useTravel();
+  const { maps, addMap, refresh } = useTravel();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [draft, setDraft] = useState({ title: "", city: "", subtitle: "" });
+  const [draft, setDraft] = useState({ title: "", city: "", subtitle: "", routeEnabled: false });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [showJoin, setShowJoin] = useState(false);
+  const [inviteToken, setInviteToken] = useState("");
   const visible = maps.filter((map) =>
     Boolean(map.archived) === showArchived &&
     `${map.title} ${map.city} ${map.subtitle}`.toLowerCase().includes(query.toLowerCase())
@@ -35,17 +38,35 @@ export function MapsPage() {
     }
   }
 
+  async function joinMap(event: FormEvent) {
+    event.preventDefault();
+    if (!inviteToken.trim()) return;
+    setSaving(true);
+    setSaveError(undefined);
+    try {
+      const result = await acceptMapInvitation(inviteToken.trim());
+      await refresh();
+      setShowJoin(false);
+      navigate(`/maps/${result.map_id}`);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "加入地图失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="content-page maps-index-page">
       <header className="content-header">
         <div>
-          <span className="eyebrow">THEME MAPS</span>
+          <span className="eyebrow">MY COLLECTIONS</span>
           <h1>主题地图</h1>
-          <p>一张地图可以是一个年度计划，也可以只是一顿晚饭的念头。</p>
+          <p>用一张地图收好一个城市、一份年票清单，或一趟专门去吃东西的旅行。</p>
         </div>
-        <button className="primary-button" type="button" onClick={() => setShowCreate(true)}>
-          <Plus size={18} /> 新建地图
-        </button>
+        <div className="header-actions">
+          <button className="secondary-button" type="button" onClick={() => { setSaveError(undefined); setShowJoin(true); }}><KeyRound size={17} /> 使用邀请</button>
+          <button className="primary-button" type="button" onClick={() => setShowCreate(true)}><Plus size={18} /> 新建地图</button>
+        </div>
       </header>
 
       <div className="index-toolbar">
@@ -86,6 +107,7 @@ export function MapsPage() {
                   <div className="theme-card-meta">
                     <AvatarStack members={map.members} />
                     <span><MapPinned size={15} /> {total} 个地点</span>
+                    {map.routeEnabled && <span><Route size={15} /> 路线已启用</span>}
                     <span>更新于 {map.updatedAt}</span>
                   </div>
                   <span className="card-arrow"><ArrowRight size={19} /></span>
@@ -138,10 +160,24 @@ export function MapsPage() {
                 placeholder="秋天慢慢走完一条街"
               />
             </label>
+            <label className="choice-row">
+              <input type="checkbox" checked={draft.routeEnabled} onChange={(event) => setDraft({ ...draft, routeEnabled: event.target.checked })} />
+              <span><strong>为这张地图启用路线</strong><small>适合美食、散步等需要安排顺序的主题；公园打卡可以暂不启用。</small></span>
+            </label>
             <div className="form-actions">
               <button className="secondary-button" type="button" onClick={() => setShowCreate(false)}>取消</button>
               <button className="primary-button" type="submit" disabled={saving}>{saving ? "正在创建…" : "创建地图"}</button>
             </div>
+            {saveError && <div className="map-search-error">{saveError}</div>}
+          </form>
+        </Modal>
+      )}
+      {showJoin && (
+        <Modal title="加入同行地图" onClose={() => setShowJoin(false)}>
+          <form className="form-stack" onSubmit={joinMap}>
+            <div className="assistant-boundary"><Users size={18} /><p>粘贴地图所有者发给你的一次性邀请令牌。加入后仍会独立保存你的意愿和到访记录。</p></div>
+            <label>邀请令牌<input autoFocus value={inviteToken} onChange={(event) => setInviteToken(event.target.value)} placeholder="粘贴邀请令牌" /></label>
+            <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setShowJoin(false)}>取消</button><button className="primary-button" type="submit" disabled={saving || !inviteToken.trim()}>{saving ? "正在加入…" : "加入地图"}</button></div>
             {saveError && <div className="map-search-error">{saveError}</div>}
           </form>
         </Modal>
