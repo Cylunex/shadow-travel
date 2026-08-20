@@ -32,7 +32,7 @@ type RouteMode = "walking" | "transit" | "driving" | "bicycling";
 
 export function RoutePage() {
   const { routeId } = useParams();
-  const { routes, mapById, placeById, reorderRouteStop, setRouteMode } = useTravel();
+  const { routes, mapById, placeById, reorderRouteStop, setRouteOrder, setRouteMode } = useTravel();
   const navigate = useNavigate();
   const route = routes.find((item) => item.id === routeId);
   const [mode, setMode] = useState<RouteMode>(route?.mode ?? "walking");
@@ -40,6 +40,7 @@ export function RoutePage() {
   const [routeResult, setRouteResult] = useState<AMapRouteResult>();
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string>();
+  const [draggedIndex, setDraggedIndex] = useState<number>();
   const mapProvider = mapProviderForCountry();
   const map = route ? mapById(route.mapId) : undefined;
   const stops = useMemo(() => route ? route.stopIds.map((id) => placeById(id)).filter(Boolean) as NonNullable<ReturnType<typeof placeById>>[] : [], [placeById, route]);
@@ -93,7 +94,22 @@ export function RoutePage() {
           </div>
           <div className="stop-list">
             {stops.map((place, index) => (
-              <article key={place.id}>
+              <article
+                key={place.id}
+                draggable
+                className={draggedIndex === index ? "dragging" : ""}
+                onDragStart={() => setDraggedIndex(index)}
+                onDragEnd={() => setDraggedIndex(undefined)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  if (draggedIndex === undefined || draggedIndex === index || !route) return;
+                  const stopIds = [...route.stopIds];
+                  const [moved] = stopIds.splice(draggedIndex, 1);
+                  stopIds.splice(index, 0, moved);
+                  setDraggedIndex(undefined);
+                  void setRouteOrder(route.id, stopIds).catch((error) => setToast(error instanceof Error ? error.message : "路线顺序保存失败"));
+                }}
+              >
                 <GripVertical className="grip" size={18} />
                 <span className="stop-number">{index + 1}</span>
                 <button className="stop-content" type="button" onClick={() => navigate(`/places/${place.id}`)}>

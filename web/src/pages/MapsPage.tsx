@@ -88,11 +88,11 @@ export function MapsPage() {
             <article
               key={map.id}
               className={`theme-map-card theme-${index % 3}`}
-              style={{ "--map-accent": map.accent, "--map-soft": map.accentSoft } as React.CSSProperties}
+              style={{ "--map-accent": "#159de5", "--map-soft": "rgba(21,157,229,.12)" } as React.CSSProperties}
             >
               <button type="button" onClick={() => navigate(`/maps/${map.id}`)} aria-label={`打开${map.title}`}>
                 <div className="theme-card-art">
-                  <span className="theme-symbol">{map.emoji}</span>
+                  <span className="theme-symbol"><MapPinned size={19} /></span>
                   <span className="contour contour-one" />
                   <span className="contour contour-two" />
                   {map.pointIds.slice(0, 5).map((id, pointIndex) => (

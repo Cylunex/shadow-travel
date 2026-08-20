@@ -38,13 +38,14 @@ type TravelState = {
   mapById: (id?: string) => TravelMap | undefined;
   placeById: (id?: string) => Place | undefined;
   placesForMap: (mapId: string) => Place[];
-  setPreference: (placeId: string, preference: Preference) => Promise<void>;
+  setPreference: (placeId: string, preference: Preference, mapId?: string) => Promise<void>;
   markVisited: (placeId: string, mapId?: string) => Promise<void>;
   addMap: (input: NewMapInput) => Promise<TravelMap>;
   addPlace: (mapId: string, input: NewPlaceInput) => Promise<Place>;
   updatePlace: (placeId: string, input: { note?: string }) => Promise<void>;
   recordVisit: (placeId: string, input: { mapId?: string; visitedOn?: string; note?: string; rating?: number }) => Promise<void>;
   reorderRouteStop: (routeId: string, index: number, direction: -1 | 1) => Promise<void>;
+  setRouteOrder: (routeId: string, stopIds: string[]) => Promise<void>;
   setRouteMode: (routeId: string, mode: TravelRoute["mode"]) => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -105,9 +106,9 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     mapById: (id) => maps.find((map) => map.id === id),
     placeById: (id) => places.find((place) => place.id === id),
     placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)),
-    setPreference: async (placeId, preference) => {
+    setPreference: async (placeId, preference, mapId) => {
       setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, preference } : place));
-      if (!developmentDemo) await updatePlacePreference(placeId, preference);
+      if (!developmentDemo) await updatePlacePreference(placeId, preference, mapId);
     },
     markVisited: async (placeId, mapId) => {
       if (developmentDemo) {
@@ -139,8 +140,8 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         title: input.title,
         subtitle: input.subtitle || "一张新的主题地图",
         city: input.city,
-        accent: "#7c684a",
-        accentSoft: "#ece3d5",
+        accent: "#159de5",
+        accentSoft: "#dff3fd",
         emoji: "行",
         routeEnabled: input.routeEnabled ?? false,
         pointIds: [],
@@ -210,6 +211,10 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       if (target < 0 || target >= route.stopIds.length) return;
       const stopIds = [...route.stopIds];
       [stopIds[index], stopIds[target]] = [stopIds[target], stopIds[index]];
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
+      if (!developmentDemo) await updateTravelRoute(routeId, { stopIds });
+    },
+    setRouteOrder: async (routeId, stopIds) => {
       setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
       if (!developmentDemo) await updateTravelRoute(routeId, { stopIds });
     },

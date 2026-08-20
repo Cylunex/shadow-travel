@@ -126,8 +126,11 @@ export async function createTravelPlace(mapId: string, input: {
   });
 }
 
-export async function updatePlacePreference(placeId: string, preference: Preference): Promise<void> {
-  await request(`api/browser/v1/places/${placeId}/preference`, {
+export async function updatePlacePreference(placeId: string, preference: Preference, mapId?: string): Promise<void> {
+  const endpoint = mapId
+    ? `api/browser/v1/travel-maps/${mapId}/places/${placeId}/preference`
+    : `api/browser/v1/places/${placeId}/preference`;
+  await request(endpoint, {
     method: "PUT",
     body: JSON.stringify({ preference })
   });

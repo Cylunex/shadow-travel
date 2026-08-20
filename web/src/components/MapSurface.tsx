@@ -85,7 +85,7 @@ export function MapSurface({
             <button
               key={place.id}
               type="button"
-              className={`map-marker${selectedId === place.id ? " selected" : ""}${
+              className={`map-marker preference-${place.preference}${selectedId === place.id ? " selected" : ""}${
                 visited ? " visited" : ""
               }${routeIndex >= 0 ? " route-stop" : ""}`}
               style={

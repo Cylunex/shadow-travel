@@ -1,0 +1,16 @@
+.app-frame { min-height: 100vh; padding-left: var(--rail); background: var(--bg); }
+.side-rail { position: fixed; z-index: 100; inset: 0 auto 0 0; display: flex; width: var(--rail); flex-direction: column; align-items: center; gap: 8px; padding: 12px 8px; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 96%, transparent); }
+.brand-mark { display: grid; width: 56px; min-height: 58px; place-items: center; gap: 3px; color: var(--text); text-align: center; }
+.brand-mark small { color: var(--text-2); font-size: 8px; font-weight: 700; line-height: 1.08; }
+.travel-logo { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 9px; background: var(--travel); color: white; font-size: 11px; font-weight: 850; letter-spacing: -.04em; }
+.side-nav { display: grid; width: 100%; gap: 5px; margin-top: 12px; }
+.side-link { display: flex; width: 100%; min-height: 52px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: var(--muted); font-size: 10px; transition: background var(--ease), color var(--ease), border-color var(--ease), transform var(--ease); }
+.side-link:hover { border-color: var(--line); background: var(--panel-2); color: var(--text); }
+.side-link:active { transform: scale(.96); }
+.side-link.active { border-color: rgba(21, 157, 229, .24); background: var(--travel-soft); color: var(--travel); }
+.theme-toggle { margin-top: auto; }
+.rail-settings { margin-top: 0; }
+.account-dot { display: grid; width: 32px; height: 32px; place-items: center; border: 2px solid var(--panel); border-radius: 50%; background: var(--travel); color: #fff; font-size: 12px; font-weight: 800; box-shadow: 0 0 0 1px var(--line); }
+.app-content { min-width: 0; min-height: 100vh; }
+.mobile-bar, .bottom-nav { display: none; }
+.demo-ribbon { position: fixed; z-index: 180; bottom: 10px; left: calc(var(--rail) + 10px); padding: 4px 8px; border: 1px solid rgba(245, 154, 69, .3); border-radius: 999px; background: color-mix(in srgb, var(--panel) 92%, transparent); color: var(--food); font-size: 10px; }

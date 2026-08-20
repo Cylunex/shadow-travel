@@ -29,9 +29,13 @@ export function AMapSurface({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<AMap.Map | null>(null);
   const overlaysRef = useRef<Array<AMap.Marker | AMap.Polyline>>([]);
+  const clusterRef = useRef<AMapMarkerCluster | null>(null);
   const onMapClickRef = useRef(onMapClick);
   const [AMapApi, setAMapApi] = useState<typeof AMap>();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [theme, setTheme] = useState<"dark" | "light">(
+    document.documentElement.dataset.theme === "light" ? "light" : "dark"
+  );
   const selectedPlace = places.find((place) => place.id === selectedId);
   onMapClickRef.current = onMapClick;
 
@@ -44,7 +48,7 @@ export function AMapSurface({
         viewMode: "2D",
         zoom: compact ? 13 : 11,
         center: initialCenter(places),
-        mapStyle: "amap://styles/darkblue",
+        mapStyle: document.documentElement.dataset.theme === "light" ? "amap://styles/normal" : "amap://styles/darkblue",
         showLabel: true
       });
       mapRef.current = map;
@@ -61,21 +65,47 @@ export function AMapSurface({
     });
     return () => {
       disposed = true;
+      clusterRef.current?.clearMarkers();
+      clusterRef.current = null;
       map?.destroy();
       mapRef.current = null;
     };
   }, [compact]);
 
   useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    mapRef.current?.setMapStyle(theme === "light" ? "amap://styles/normal" : "amap://styles/darkblue");
+  }, [theme]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      const resizableMap = mapRef.current as (AMap.Map & { resize?: () => void }) | null;
+      resizableMap?.resize?.();
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !AMapApi) return;
+    clusterRef.current?.clearMarkers();
+    clusterRef.current = null;
     if (overlaysRef.current.length) map.remove(overlaysRef.current);
 
     const routeIds = new Map(routePlaces.map((place, index) => [place.id, index + 1]));
     const markers = places.map((place) => {
       const content = document.createElement("button");
       content.type = "button";
-      content.className = `amap-place-marker${place.visitedBy.includes("me") ? " visited" : ""}${selectedId === place.id ? " selected" : ""}${routeIds.has(place.id) ? " route-stop" : ""}`;
+      content.className = `amap-place-marker preference-${place.preference}${place.visitedBy.includes("me") ? " visited" : ""}${selectedId === place.id ? " selected" : ""}${routeIds.has(place.id) ? " route-stop" : ""}`;
       content.setAttribute("aria-label", `${place.name}${place.visitedBy.includes("me") ? "，已去过" : "，还没去"}`);
       const dot = document.createElement("span");
       dot.textContent = String(routeIds.get(place.id) ?? (place.visitedBy.includes("me") ? "✓" : ""));
@@ -96,20 +126,44 @@ export function AMapSurface({
     const path = routePath?.length ? routePath : routePlaces.map((place) => place.coordinate);
     const line = path.length > 1 ? new AMapApi.Polyline({
       path: path.map((point) => new AMapApi.LngLat(point.longitude, point.latitude)),
-      strokeColor: "#20d6d2",
+      strokeColor: "#159de5",
       strokeWeight: 6,
       strokeOpacity: .82,
       borderWeight: 2,
-      outlineColor: "#05222d",
+      outlineColor: "#07111d",
       lineJoin: "round",
       lineCap: "round",
       showDir: true,
       zIndex: 80
     }) : undefined;
-    const overlays: Array<AMap.Marker | AMap.Polyline> = line ? [...markers, line] : markers;
-    overlaysRef.current = overlays;
-    map.add(overlays);
-    if (overlays.length) map.setFitView(overlays, false, compact ? [28, 28, 28, 28] : [80, 80, 80, 80], compact ? 15 : 14);
+    const Cluster = markerClusterConstructor(AMapApi);
+    const useCluster = Boolean(Cluster && markers.length > 1 && routePlaces.length === 0);
+    if (useCluster && Cluster) {
+      clusterRef.current = new Cluster(map, markers, {
+        gridSize: compact ? 44 : 54,
+        minClusterSize: 3,
+        maxZoom: 14,
+        averageCenter: true,
+        zoomOnClick: true,
+        renderClusterMarker: ({ count, marker }) => {
+          const content = document.createElement("button");
+          content.type = "button";
+          content.className = "amap-cluster-marker";
+          content.textContent = String(count);
+          content.setAttribute("aria-label", `${count} 个地点，点击放大`);
+          marker.setContent(content);
+          marker.setAnchor("center");
+        }
+      });
+      overlaysRef.current = line ? [line] : [];
+      if (line) map.add(line);
+    } else {
+      const overlays: Array<AMap.Marker | AMap.Polyline> = line ? [...markers, line] : markers;
+      overlaysRef.current = overlays;
+      map.add(overlays);
+    }
+    const fitOverlays: Array<AMap.Marker | AMap.Polyline> = line ? [...markers, line] : markers;
+    if (fitOverlays.length) map.setFitView(fitOverlays, false, compact ? [28, 28, 28, 28] : [80, 80, 80, 80], compact ? 15 : 14);
   }, [AMapApi, compact, onSelect, places, routePath, routePlaces, selectedId]);
 
   useEffect(() => {
@@ -128,7 +182,7 @@ export function AMapSurface({
       {!compact && <div className="map-controls" aria-label="地图控制">
         <button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="放大地图"><Plus size={18} /></button>
         <button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="缩小地图"><Minus size={18} /></button>
-        <button type="button" onClick={() => mapRef.current?.setFitView()} aria-label="显示全部点位"><LocateFixed size={18} /></button>
+        <button type="button" onClick={() => locate(mapRef.current)} aria-label="定位到当前位置"><LocateFixed size={18} /></button>
       </div>}
       {externalUrl && !compact && <a className="map-navigate" href={externalUrl} target="_blank" rel="noreferrer" aria-label={`在${provider.label}打开${selectedPlace?.name}`}><Navigation size={16} />{provider.label}打开</a>}
       {onMapClick && status === "ready" && !compact && <span className="map-click-hint">点击地图空白处添加地点</span>}
@@ -136,8 +190,37 @@ export function AMapSurface({
   );
 }
 
+function locate(map: AMap.Map | null) {
+  if (!map || !navigator.geolocation) return map?.setFitView();
+  navigator.geolocation.getCurrentPosition(
+    ({ coords }) => map.setZoomAndCenter(15, [coords.longitude, coords.latitude]),
+    () => map.setFitView(),
+    { enableHighAccuracy: true, timeout: 8000 }
+  );
+}
+
 function initialCenter(places: Place[]): [number, number] {
   if (!places.length) return [116.397428, 39.90923];
   const total = places.reduce((value, place) => ({ longitude: value.longitude + place.coordinate.longitude, latitude: value.latitude + place.coordinate.latitude }), { longitude: 0, latitude: 0 });
   return [total.longitude / places.length, total.latitude / places.length];
+}
+
+type AMapMarkerCluster = { clearMarkers: () => void };
+type AMapMarkerClusterConstructor = new (
+  map: AMap.Map,
+  markers: AMap.Marker[],
+  options: {
+    gridSize: number;
+    minClusterSize: number;
+    maxZoom: number;
+    averageCenter: boolean;
+    zoomOnClick: boolean;
+    renderClusterMarker: (event: { count: number; marker: AMap.Marker }) => void;
+  }
+) => AMapMarkerCluster;
+
+function markerClusterConstructor(api: typeof AMap): AMapMarkerClusterConstructor | undefined {
+  const plugins = api as unknown as Record<string, unknown>;
+  const constructor = plugins.MarkerCluster ?? plugins.MarkerClusterer;
+  return typeof constructor === "function" ? constructor as AMapMarkerClusterConstructor : undefined;
 }

@@ -89,7 +89,7 @@ export function GlobalMapPage() {
             <div className="atlas-theme-list">
               {maps.map((map) => (
                 <button key={map.id} type="button" onClick={() => navigate(`/maps/${map.id}`)} style={{ "--map-accent": map.accent } as React.CSSProperties}>
-                  <span className="atlas-theme-symbol">{map.emoji}</span>
+                  <span className="atlas-theme-symbol"><MapPinned size={16} /></span>
                   <span><strong>{map.title}</strong><small>{map.city} · {map.pointIds.length} 个地点</small></span>
                   <span className="atlas-theme-progress">{map.completed}/{map.pointIds.length}</span>
                 </button>

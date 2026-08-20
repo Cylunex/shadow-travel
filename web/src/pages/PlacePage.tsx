@@ -8,6 +8,7 @@ import {
   Heart,
   ImagePlus,
   LoaderCircle,
+  MapPinned,
   MapPin,
   Navigation,
   Pencil,
@@ -19,6 +20,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { MapSurface } from "../components/MapSurface";
 import { AvatarStack, EmptyState, Modal, Toast } from "../components/Shared";
+import { VisitDialog } from "../components/VisitDialog";
 import { PhotoRecord, loadPhotoUrl, loadPlacePhotos, uploadPlacePhoto } from "../api";
 import { mapProviderForCountry } from "../map/provider";
 import { useTravel } from "../state/TravelContext";
@@ -33,18 +35,13 @@ const preferenceLabels: { value: Preference; label: string }[] = [
 
 export function PlacePage() {
   const { placeId } = useParams();
-  const { placeById, maps, visits, members, capabilities, setPreference, markVisited, updatePlace, recordVisit } = useTravel();
+  const { placeById, maps, visits, members, capabilities, setPreference, updatePlace, recordVisit } = useTravel();
   const navigate = useNavigate();
   const place = placeById(placeId);
   const [toast, setToast] = useState<string>();
   const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [addingVisit, setAddingVisit] = useState(false);
-  const [visitDraft, setVisitDraft] = useState({
-    visitedOn: new Date().toISOString().slice(0, 10),
-    note: "",
-    rating: "5"
-  });
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState<Array<{ record: PhotoRecord; url: string }>>([]);
   const [photosLoading, setPhotosLoading] = useState(false);
@@ -105,26 +102,6 @@ export function PlacePage() {
     }
   }
 
-  async function saveVisit(event: FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      await recordVisit(placeData.id, {
-        mapId: placeData.mapIds[0],
-        visitedOn: visitDraft.visitedOn,
-        note: visitDraft.note,
-        rating: Number(visitDraft.rating)
-      });
-      setAddingVisit(false);
-      setVisitDraft({ visitedOn: new Date().toISOString().slice(0, 10), note: "", rating: "5" });
-      notify("到访记录已保存");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "到访记录保存失败");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     const mapId = placeData.mapIds[0];
@@ -176,7 +153,7 @@ export function PlacePage() {
             </div>
             <div className="photo-toolbar">
               <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadPhoto} hidden />
-              <span><ShieldCheck size={15} /> 照片默认私密，仅相关地图成员可见</span>
+              <span><ShieldCheck size={15} /> 照片默认仅自己可见，主动共享后主题成员可见</span>
               {capabilities.media && <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={photoUploading}>{photoUploading ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}{photoUploading ? "上传中…" : "上传照片"}</button>}
             </div>
           </section>
@@ -212,7 +189,7 @@ export function PlacePage() {
                     <div>
                       {visit.rating && <span className="personal-rating">个人感受 {visit.rating}/5</span>}
                       <p>{visit.note}</p>
-                      <small><Camera size={14} /> {visit.photoCount} 张照片 · 默认仅相关地图成员可见</small>
+                      <small><Camera size={14} /> {visit.photoCount} 张照片 · 默认仅自己可见</small>
                     </div>
                   </article>
                 ))}
@@ -232,7 +209,7 @@ export function PlacePage() {
               {visited ? <Check size={24} /> : <MapPin size={24} />}
             </div>
             <div><span>我的状态</span><strong>{visited ? "我去过" : "还没去"}</strong></div>
-            {!visited && <button type="button" onClick={() => { void markVisited(place.id, place.mapIds[0]).then(() => notify("已记录为今天去过")).catch((error) => notify(error instanceof Error ? error.message : "标记失败")); }}>标记去过</button>}
+            {!visited && <button type="button" onClick={() => setAddingVisit(true)}>标记去过</button>}
           </section>
 
           <section className="side-card">
@@ -244,7 +221,7 @@ export function PlacePage() {
                   key={value}
                   type="button"
                   className={place.preference === value ? "active" : ""}
-                  onClick={() => { void setPreference(place.id, value).catch((error) => notify(error instanceof Error ? error.message : "状态保存失败")); }}
+                  onClick={() => { void setPreference(place.id, value, place.mapIds[0]).catch((error) => notify(error instanceof Error ? error.message : "状态保存失败")); }}
                 >
                   {value === "want" && <Heart size={15} />}
                   {value === "planned" && <CalendarPlus size={15} />}
@@ -268,7 +245,7 @@ export function PlacePage() {
             <div className="map-reference-list">
               {placeMaps.map((map) => (
                 <button key={map.id} type="button" onClick={() => navigate(`/maps/${map.id}`)}>
-                  <span style={{ background: map.accent }}>{map.emoji}</span>
+                  <span><MapPinned size={15} /></span>
                   <div><strong>{map.title}</strong><small>{map.city} · {map.pointIds.length} 个地点</small></div>
                   <ExternalLink size={15} />
                 </button>
@@ -293,19 +270,7 @@ export function PlacePage() {
           </form>
         </Modal>
       )}
-      {addingVisit && (
-        <Modal title="记录一次到访" onClose={() => setAddingVisit(false)}>
-          <form className="form-stack" onSubmit={saveVisit}>
-            <label>日期<input type="date" value={visitDraft.visitedOn} onChange={(event) => setVisitDraft({ ...visitDraft, visitedOn: event.target.value })} required /></label>
-            <label>感受与备注<textarea rows={5} value={visitDraft.note} onChange={(event) => setVisitDraft({ ...visitDraft, note: event.target.value })} placeholder="这次去了哪里、吃了什么、下次还想怎样走" /></label>
-            <label>评分<select value={visitDraft.rating} onChange={(event) => setVisitDraft({ ...visitDraft, rating: event.target.value })}>{[5, 4, 3, 2, 1].map((rating) => <option key={rating} value={rating}>{rating} 星</option>)}</select></label>
-            <div className="form-actions">
-              <button className="secondary-button" type="button" onClick={() => setAddingVisit(false)}>取消</button>
-              <button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "保存到访"}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {addingVisit && <VisitDialog placeName={placeData.name} visits={placeVisits} onClose={() => setAddingVisit(false)} onReuse={() => setAddingVisit(false)} onSave={async (draft) => { await recordVisit(placeData.id, { mapId: placeData.mapIds[0], ...draft }); setAddingVisit(false); notify("到访已保存，可继续补照片和记录"); }} />}
       {toast && <Toast>{toast}</Toast>}
     </div>
   );

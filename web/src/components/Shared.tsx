@@ -21,10 +21,10 @@ export function AvatarStack({ members, label }: { members: Member[]; label?: str
 export function ProgressRing({ value, label }: { value: number; label: string }) {
   return (
     <span className="progress-ring-wrap">
-      <span className="progress-ring" style={{ "--progress": `${value * 3.6}deg` } as React.CSSProperties}>
-        <strong>{value}%</strong>
+      <span className="progress-ring">
+        <span style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
       </span>
-      <small>{label}</small>
+      <small><strong>{value}%</strong> {label}</small>
     </span>
   );
 }
@@ -83,11 +83,12 @@ export function Modal({
   );
 }
 
-export function Toast({ children }: { children: ReactNode }) {
+export function Toast({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="toast" role="status">
       <Check size={17} />
-      {children}
+      <span>{children}</span>
+      {action}
     </div>
   );
 }

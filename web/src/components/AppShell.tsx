@@ -1,4 +1,4 @@
-import { Clock3, Compass, MapPinned, Menu, Settings, Sparkles, X } from "lucide-react";
+import { Clock3, Compass, MapPinned, Moon, Settings, Sun } from "lucide-react";
 import { ReactNode, useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 
@@ -19,7 +19,11 @@ export function AppShell({
   user: CurrentUser;
   demo: boolean;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const saved = window.localStorage.getItem("shadow-travel-theme");
+    if (saved === "dark" || saved === "light") return saved;
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  });
   const location = useLocation();
   const current = navigation.find((item) =>
     item.exact ? location.pathname === item.to : location.pathname.startsWith(item.to)
@@ -29,11 +33,17 @@ export function AppShell({
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [location.pathname]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem("shadow-travel-theme", theme);
+  }, [theme]);
+
   return (
     <div className="app-frame">
       <aside className="side-rail" aria-label="主导航">
         <NavLink className="brand-mark" to="/" aria-label="Shadow Travel 首页">
-          <Sparkles size={21} />
+          <span className="travel-logo">ST</span>
           <small>Shadow<br />Travel</small>
         </NavLink>
         <nav className="side-nav">
@@ -50,7 +60,11 @@ export function AppShell({
             </NavLink>
           ))}
         </nav>
-        <NavLink className="side-link rail-settings" to="/settings" aria-label="设置">
+        <button className="side-link theme-toggle" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={`切换到${theme === "dark" ? "日间" : "暗夜"}模式`}>
+          {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+          <span>{theme === "dark" ? "日间" : "暗夜"}</span>
+        </button>
+        <NavLink className="side-link rail-settings" to="/settings" aria-label="我的">
           <Settings size={21} strokeWidth={1.8} />
           <span>我的</span>
         </NavLink>
@@ -60,54 +74,14 @@ export function AppShell({
       </aside>
 
       <header className="mobile-bar">
-        <button
-          className="icon-button"
-          type="button"
-          onClick={() => setDrawerOpen(true)}
-          aria-label="打开导航"
-        >
-          <Menu size={22} />
+        <NavLink className="mobile-brand" to="/"><span className="travel-logo">ST</span><strong>{current?.label ?? "Shadow Travel"}</strong></NavLink>
+        <button className="mobile-theme-toggle" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={`切换到${theme === "dark" ? "日间" : "暗夜"}模式`}>
+          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
-        <NavLink className="mobile-brand" to="/"><Sparkles size={16} /><strong>{current?.label ?? "Shadow Travel"}</strong></NavLink>
         <NavLink className="mobile-avatar" to="/settings" aria-label="账户设置">
           {user.display_name.slice(0, 1)}
         </NavLink>
       </header>
-
-      {drawerOpen && (
-        <div className="nav-drawer-backdrop" role="presentation" onClick={() => setDrawerOpen(false)}>
-          <aside
-            className="nav-drawer"
-            aria-label="移动端导航"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="drawer-heading">
-              <div>
-                <span className="eyebrow">SHADOW TRAVEL</span>
-                <strong>去过的地方，都是地图的一部分</strong>
-              </div>
-              <button
-                className="icon-button"
-                type="button"
-                onClick={() => setDrawerOpen(false)}
-                aria-label="关闭导航"
-              >
-                <X size={21} />
-              </button>
-            </div>
-            <nav>
-              {[...navigation, { to: "/settings", label: "我的", icon: Settings }].map(
-                ({ to, label, icon: Icon }) => (
-                  <NavLink key={to} to={to} onClick={() => setDrawerOpen(false)}>
-                    <Icon size={20} />
-                    {label}
-                  </NavLink>
-                )
-              )}
-            </nav>
-          </aside>
-        </div>
-      )}
 
       <div className="app-content">
         {demo && <span className="demo-ribbon">演示数据 · 操作不会保存</span>}

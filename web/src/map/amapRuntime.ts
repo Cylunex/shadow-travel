@@ -5,6 +5,7 @@ import { Place } from "../types";
 const plugins = [
   "AMap.ToolBar",
   "AMap.Scale",
+  "AMap.MarkerCluster",
   "AMap.PlaceSearch",
   "AMap.AutoComplete",
   "AMap.Geocoder",
