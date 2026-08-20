@@ -96,6 +96,12 @@ class AuditEvent(Base):
     __table_args__ = (
         Index("ix_audit_events_created_at", "created_at"),
         Index("ix_audit_events_resource", "resource_type", "resource_id"),
+        Index(
+            "ix_audit_events_resource_created",
+            "resource_type",
+            "resource_id",
+            "created_at",
+        ),
     )
 
     audit_event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
@@ -189,7 +195,12 @@ class TravelPlace(Base):
     __tablename__ = "travel_places"
     __table_args__ = (
         Index("ix_travel_places_owner_updated", "owner_user_id", "updated_at"),
-        UniqueConstraint("provider", "provider_place_id", name="uq_travel_place_provider"),
+        UniqueConstraint(
+            "owner_user_id",
+            "provider",
+            "provider_place_id",
+            name="uq_travel_place_owner_provider",
+        ),
     )
 
     place_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
@@ -297,6 +308,14 @@ class TravelVisitMapShare(Base):
 
 class TravelVisitRecord(Base):
     __tablename__ = "travel_visit_records"
+    __table_args__ = (
+        Index(
+            "ix_travel_visit_records_shared_map_created",
+            "shared_map_id",
+            "visibility",
+            "created_at",
+        ),
+    )
 
     visit_record_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
     visit_id: Mapped[str] = mapped_column(

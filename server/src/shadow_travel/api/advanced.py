@@ -5,14 +5,15 @@ import hashlib
 import io
 import json
 import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from shadow_travel.api.pagination import decode_cursor, encode_cursor
 from shadow_travel.api.travel import (
     _accessible_map,
     _clean_tags,
@@ -44,6 +45,9 @@ from shadow_travel.infrastructure.models import (
 
 router = APIRouter(prefix="/api/browser/v1", tags=["travel-advanced"])
 public_router = APIRouter(prefix="/api/public/v1", tags=["travel-public"])
+
+MAX_IMPORT_POINTS = 1000
+SHARE_ACCESS_WRITE_INTERVAL = timedelta(minutes=15)
 
 
 class VisitShareUpdate(BaseModel):
@@ -440,31 +444,80 @@ def shared_records(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=2000)] = None,
 ) -> dict[str, object]:
     with _session(request) as session:
         _accessible_map(session, map_id, user.shadow_user_id)
-        rows = session.execute(
-            select(TravelVisitRecord, TravelVisit, ShadowUser)
+        photo_counts = _photo_count_subquery()
+        statement = (
+            select(
+                TravelVisitRecord,
+                TravelVisit,
+                ShadowUser,
+                func.coalesce(photo_counts.c.photo_count, 0),
+            )
             .join(TravelVisit, TravelVisit.visit_id == TravelVisitRecord.visit_id)
             .join(ShadowUser, ShadowUser.shadow_user_id == TravelVisit.shadow_user_id)
+            .outerjoin(
+                photo_counts,
+                photo_counts.c.visit_record_id == TravelVisitRecord.visit_record_id,
+            )
             .where(
                 TravelVisitRecord.visibility == "shared",
                 TravelVisitRecord.shared_map_id == map_id,
             )
-            .order_by(TravelVisit.visited_on.desc(), TravelVisitRecord.created_at.desc())
-            .limit(limit)
-        ).all()
+            .order_by(
+                TravelVisit.visited_on.desc(),
+                TravelVisitRecord.created_at.desc(),
+                TravelVisitRecord.visit_record_id.desc(),
+            )
+        )
+        if cursor:
+            values = _cursor_values(cursor, "shared-records", {"visited_on", "created_at", "id"})
+            try:
+                visited_on = date.fromisoformat(values["visited_on"])
+                created_at = datetime.fromisoformat(values["created_at"])
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail={"code": "invalid_pagination_cursor"}
+                ) from exc
+            statement = statement.where(
+                or_(
+                    TravelVisit.visited_on < visited_on,
+                    and_(
+                        TravelVisit.visited_on == visited_on,
+                        TravelVisitRecord.created_at < created_at,
+                    ),
+                    and_(
+                        TravelVisit.visited_on == visited_on,
+                        TravelVisitRecord.created_at == created_at,
+                        TravelVisitRecord.visit_record_id < values["id"],
+                    ),
+                )
+            )
+        rows = session.execute(statement.limit(limit + 1)).all()
+        page = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit:
+            last_record, last_visit, _, _ = page[-1]
+            next_cursor = encode_cursor(
+                "shared-records",
+                visited_on=last_visit.visited_on.isoformat(),
+                created_at=last_record.created_at.isoformat(),
+                id=last_record.visit_record_id,
+            )
         return {
             "records": [
                 {
-                    **_record_payload(record, visit, _photo_count(session, record.visit_record_id)),
+                    **_record_payload(record, visit, int(photo_count)),
                     "member": {
                         "id": member.shadow_user_id,
                         "name": member.display_name or member.username,
                     },
                 }
-                for record, visit, member in rows
-            ]
+                for record, visit, member, photo_count in page
+            ],
+            "next_cursor": next_cursor,
         }
 
 
@@ -795,6 +848,7 @@ def apply_import(
             if item.provider_place_id:
                 place = session.scalar(
                     select(TravelPlace).where(
+                        TravelPlace.owner_user_id == user.shadow_user_id,
                         TravelPlace.provider == item.provider,
                         TravelPlace.provider_place_id == item.provider_place_id,
                     )
@@ -1044,7 +1098,10 @@ def public_share(token: str, request: Request) -> dict[str, object]:
         travel_map = session.get(TravelMap, item.map_id)
         if travel_map is None or travel_map.archived:
             raise HTTPException(status_code=404, detail={"code": "share_link_not_found"})
-        item.last_accessed_at = now
+        if item.last_accessed_at is None or _aware(item.last_accessed_at) <= (
+            now - SHARE_ACCESS_WRITE_INTERVAL
+        ):
+            item.last_accessed_at = now
         rows = _map_point_rows(session, travel_map.map_id)
         payload: dict[str, object] = {
             "map": {
@@ -1076,14 +1133,27 @@ def public_share(token: str, request: Request) -> dict[str, object]:
             ],
         }
         if item.include_shared_records:
+            photo_counts = _photo_count_subquery()
             record_rows = session.execute(
-                select(TravelVisitRecord, TravelVisit)
+                select(
+                    TravelVisitRecord,
+                    TravelVisit,
+                    func.coalesce(photo_counts.c.photo_count, 0),
+                )
                 .join(TravelVisit, TravelVisit.visit_id == TravelVisitRecord.visit_id)
+                .outerjoin(
+                    photo_counts,
+                    photo_counts.c.visit_record_id == TravelVisitRecord.visit_record_id,
+                )
                 .where(
                     TravelVisitRecord.visibility == "shared",
                     TravelVisitRecord.shared_map_id == travel_map.map_id,
                 )
-                .order_by(TravelVisit.visited_on.desc())
+                .order_by(
+                    TravelVisit.visited_on.desc(),
+                    TravelVisitRecord.created_at.desc(),
+                    TravelVisitRecord.visit_record_id.desc(),
+                )
                 .limit(100)
             ).all()
             payload["shared_records"] = [
@@ -1092,9 +1162,9 @@ def public_share(token: str, request: Request) -> dict[str, object]:
                     "visited_on": visit.visited_on,
                     "note": record.note,
                     "rating": record.rating,
-                    "photo_count": _photo_count(session, record.visit_record_id),
+                    "photo_count": int(photo_count),
                 }
-                for record, visit in record_rows
+                for record, visit, photo_count in record_rows
             ]
         return payload
 
@@ -1105,15 +1175,42 @@ def audit_events(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=2000)] = None,
 ) -> dict[str, object]:
     with _session(request) as session:
         _accessible_map(session, map_id, user.shadow_user_id)
-        events = session.scalars(
+        statement = (
             select(AuditEvent)
             .where(AuditEvent.resource_type == "travel_map", AuditEvent.resource_id == map_id)
-            .order_by(AuditEvent.created_at.desc())
-            .limit(limit)
-        ).all()
+            .order_by(AuditEvent.created_at.desc(), AuditEvent.audit_event_id.desc())
+        )
+        if cursor:
+            values = _cursor_values(cursor, "audit-events", {"created_at", "id"})
+            try:
+                created_at = datetime.fromisoformat(values["created_at"])
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=422, detail={"code": "invalid_pagination_cursor"}
+                ) from exc
+            statement = statement.where(
+                or_(
+                    AuditEvent.created_at < created_at,
+                    and_(
+                        AuditEvent.created_at == created_at,
+                        AuditEvent.audit_event_id < values["id"],
+                    ),
+                )
+            )
+        rows = session.scalars(statement.limit(limit + 1)).all()
+        events = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit:
+            last = events[-1]
+            next_cursor = encode_cursor(
+                "audit-events",
+                created_at=last.created_at.isoformat(),
+                id=last.audit_event_id,
+            )
         return {
             "events": [
                 {
@@ -1126,7 +1223,8 @@ def audit_events(
                     "created_at": item.created_at,
                 }
                 for item in events
-            ]
+            ],
+            "next_cursor": next_cursor,
         }
 
 
@@ -1152,6 +1250,17 @@ def _photo_count(session: Session, record_id: str) -> int:
             .where(TravelPhoto.visit_record_id == record_id)
         )
         or 0
+    )
+
+
+def _photo_count_subquery():
+    return (
+        select(
+            TravelPhoto.visit_record_id.label("visit_record_id"),
+            func.count(TravelPhoto.photo_id).label("photo_count"),
+        )
+        .group_by(TravelPhoto.visit_record_id)
+        .subquery()
     )
 
 
@@ -1198,53 +1307,110 @@ def _map_point_rows(session: Session, map_id: str) -> list[tuple[TravelMapPlace,
 def _parse_import(
     body: ImportSource, travel_map: TravelMap
 ) -> tuple[list[ImportPoint], list[dict[str, object]]]:
-    raw_items: list[dict[str, object]] = []
+    raw_items: list[tuple[int, dict[str, object]]] = []
     errors: list[dict[str, object]] = []
     try:
         if body.format == "csv":
             reader = csv.DictReader(io.StringIO(body.content.removeprefix("\ufeff")))
             if not reader.fieldnames:
                 return [], [{"row": 1, "message": "CSV 缺少表头"}]
-            for row in reader:
-                raw_items.append(
-                    {
-                        **row,
-                        "tags": str(row.get("tags", "")).split("|") if row.get("tags") else [],
-                        "custom_values": json.loads(str(row.get("custom_values") or "{}")),
-                        "counts_toward_progress": str(
-                            row.get("counts_toward_progress", "true")
-                        ).lower()
-                        not in {"false", "0", "no"},
-                        "longitude": float(str(row.get("longitude", ""))),
-                        "latitude": float(str(row.get("latitude", ""))),
-                    }
-                )
+            for row_number, row in enumerate(reader, start=2):
+                if row_number > MAX_IMPORT_POINTS + 1:
+                    errors.append(
+                        {
+                            "row": row_number,
+                            "message": f"单次最多导入 {MAX_IMPORT_POINTS} 个点位",
+                        }
+                    )
+                    break
+                try:
+                    raw_items.append(
+                        (
+                            row_number,
+                            {
+                                **row,
+                                "tags": str(row.get("tags", "")).split("|")
+                                if row.get("tags")
+                                else [],
+                                "custom_values": json.loads(
+                                    str(row.get("custom_values") or "{}")
+                                ),
+                                "counts_toward_progress": str(
+                                    row.get("counts_toward_progress", "true")
+                                ).lower()
+                                not in {"false", "0", "no"},
+                                "longitude": float(str(row.get("longitude", ""))),
+                                "latitude": float(str(row.get("latitude", ""))),
+                            },
+                        )
+                    )
+                except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                    errors.append({"row": row_number, "message": str(exc)})
         else:
             document = json.loads(body.content)
             if document.get("type") != "FeatureCollection" or not isinstance(
                 document.get("features"), list
             ):
                 return [], [{"row": 1, "message": "GeoJSON 必须是 FeatureCollection"}]
-            for feature in document["features"]:
-                geometry = feature.get("geometry", {})
-                coordinates = geometry.get("coordinates", [])
-                if geometry.get("type") != "Point" or len(coordinates) < 2:
-                    raise ValueError("feature geometry must be Point")
-                properties = dict(feature.get("properties") or {})
-                raw_items.append(
-                    {**properties, "longitude": coordinates[0], "latitude": coordinates[1]}
+            features = document["features"]
+            if len(features) > MAX_IMPORT_POINTS:
+                errors.append(
+                    {
+                        "row": MAX_IMPORT_POINTS + 2,
+                        "message": f"单次最多导入 {MAX_IMPORT_POINTS} 个点位",
+                    }
                 )
+                features = features[:MAX_IMPORT_POINTS]
+            for row_number, feature in enumerate(features, start=2):
+                try:
+                    if not isinstance(feature, dict):
+                        raise ValueError("feature must be an object")
+                    geometry = feature.get("geometry", {})
+                    if not isinstance(geometry, dict):
+                        raise ValueError("feature geometry must be an object")
+                    coordinates = geometry.get("coordinates", [])
+                    if (
+                        geometry.get("type") != "Point"
+                        or not isinstance(coordinates, list)
+                        or len(coordinates) < 2
+                    ):
+                        raise ValueError("feature geometry must be Point")
+                    properties = dict(feature.get("properties") or {})
+                    raw_items.append(
+                        (
+                            row_number,
+                            {
+                                **properties,
+                                "longitude": coordinates[0],
+                                "latitude": coordinates[1],
+                            },
+                        )
+                    )
+                except (ValueError, TypeError) as exc:
+                    errors.append({"row": row_number, "message": str(exc)})
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
-        return [], [{"row": len(raw_items) + 2, "message": str(exc)}]
+        return [], [{"row": 1, "message": str(exc)}]
     points: list[ImportPoint] = []
-    for index, raw in enumerate(raw_items, start=2):
+    for row_number, raw in raw_items:
         raw.setdefault("city", travel_map.city)
         raw.setdefault("country_code", travel_map.country_code)
         try:
             points.append(ImportPoint.model_validate(raw))
         except ValueError as exc:
-            errors.append({"row": index, "message": str(exc)})
+            errors.append({"row": row_number, "message": str(exc)})
     return points, errors
+
+
+def _cursor_values(cursor: str, kind: str, required: set[str]) -> dict[str, str]:
+    try:
+        values = decode_cursor(cursor, kind)
+        if set(values) != required:
+            raise ValueError
+        return values
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": "invalid_pagination_cursor"}
+        ) from exc
 
 
 def _share_payload(item: TravelShareLink) -> dict[str, object]:

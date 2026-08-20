@@ -553,6 +553,7 @@ def add_place(
         if body.provider_place_id:
             place = session.scalar(
                 select(TravelPlace).where(
+                    TravelPlace.owner_user_id == user.shadow_user_id,
                     TravelPlace.provider == body.provider,
                     TravelPlace.provider_place_id == body.provider_place_id,
                 )

@@ -13,7 +13,7 @@
 - `PUT /api/browser/v1/travel-maps/{map_id}/place-order`：整体重排地点顺序。
 - `GET /api/browser/v1/travel-maps/{map_id}/progress`：按成员返回本期进度；本人读取全部个人 Visit，其他成员只统计显式共享给该主题的完成状态。
 - `POST /api/browser/v1/travel-maps/{map_id}/copies`：复制共享点位、自定义字段和可选路线，不复制成员意愿、到访和照片。
-- `GET /api/browser/v1/travel-maps/{map_id}/audit-events`：读取共享资源变更审计。
+- `GET /api/browser/v1/travel-maps/{map_id}/audit-events`：读取共享资源变更审计；支持 `limit` 与不透明 `cursor`，响应返回 `next_cursor`。
 
 ### 地点、意愿和到访
 
@@ -28,15 +28,15 @@
 - `PATCH /api/browser/v1/visits/{visit_id}`、`DELETE /api/browser/v1/visits/{visit_id}`：修改或删除自己的到访。
 - `PUT /api/browser/v1/visits/{visit_id}/completion-share`：新增或撤回 VisitMapShare。
 - `PUT /api/browser/v1/visits/{visit_id}/record`：创建或更新一条可选 VisitRecord，并在私密与来源主题共享之间切换。
-- `GET /api/browser/v1/travel-maps/{map_id}/shared-records`：返回成员主动共享给该主题的记录时间线。
+- `GET /api/browser/v1/travel-maps/{map_id}/shared-records`：返回成员主动共享给该主题的记录时间线；支持 `limit` 与不透明 `cursor`，照片数量在同一次聚合查询中返回。
 
-Place 只保存名称、地址、坐标和 Provider 来源等现实事实；分类、标签、共享备注、自定义属性和排序保存在 MapPoint；Preference 始终带主题作用域；VisitMapShare 与 VisitRecord 分享互相独立。
+Place 只保存名称、地址、坐标和 Provider 来源等现实事实；同一 Provider 地点 ID 只在地点所有者范围内复用，不跨用户共享私有 Place。分类、标签、共享备注、自定义属性和排序保存在 MapPoint；Preference 始终带主题作用域；VisitMapShare 与 VisitRecord 分享互相独立。
 
 ### 自定义字段、导入与导出
 
 - `GET/POST /api/browser/v1/travel-maps/{map_id}/fields`：列出或创建文本、数字、布尔和单选字段。
 - `PATCH/DELETE /api/browser/v1/travel-maps/{map_id}/fields/{field_id}`：修改或删除字段定义；删除时同步移除点位值并递增版本。
-- `POST /api/browser/v1/travel-maps/{map_id}/imports/preview`：解析 CSV 或 GeoJSON，返回标准化点位及逐行错误，不写数据库。
+- `POST /api/browser/v1/travel-maps/{map_id}/imports/preview`：解析 CSV 或 GeoJSON，返回标准化点位及逐行错误，不写数据库；坏行不会阻断其他行，单次最多预览 1000 个点位。
 - `POST /api/browser/v1/travel-maps/{map_id}/imports`：应用确认后的点位；按 Provider 地点 ID 复用 Place。
 - `GET /api/browser/v1/travel-maps/{map_id}/export?format=csv|geojson`：只导出共享地点事实和 MapPoint 内容，不包含个人意愿、到访或照片。
 

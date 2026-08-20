@@ -696,6 +696,7 @@ def _apply_place_list_draft(
                 )
             place = session.scalar(
                 select(TravelPlace).where(
+                    TravelPlace.owner_user_id == user.shadow_user_id,
                     TravelPlace.provider == item.provider,
                     TravelPlace.provider_place_id == item.provider_place_id,
                 )
