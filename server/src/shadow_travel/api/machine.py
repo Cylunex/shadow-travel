@@ -152,12 +152,16 @@ def agent_map_context(
             .order_by(TravelMapPlace.position)
         ).all()
         place_ids = [link.place_id for link in links]
-        places_by_id = {
-            place.place_id: place
-            for place in session.scalars(
-                select(TravelPlace).where(TravelPlace.place_id.in_(place_ids))
-            ).all()
-        } if place_ids else {}
+        places_by_id = (
+            {
+                place.place_id: place
+                for place in session.scalars(
+                    select(TravelPlace).where(TravelPlace.place_id.in_(place_ids))
+                ).all()
+            }
+            if place_ids
+            else {}
+        )
         routes = session.scalars(
             select(TravelRoute)
             .where(TravelRoute.map_id == map_id)
@@ -184,18 +188,21 @@ def agent_map_context(
             "places": [
                 {
                     "id": place.place_id,
-                    "name": place.name,
+                    "name": link.display_name or place.name,
                     "address": place.address,
                     "district": place.district,
                     "city": place.city,
-                    "category": place.category,
-                    "tags": place.tags,
+                    "category": link.category,
+                    "tags": link.tags,
+                    "shared_note": link.shared_note,
+                    "custom_values": link.custom_values,
+                    "version": link.version,
                     "longitude": place.longitude,
                     "latitude": place.latitude,
                     "coordinate_reference": place.coordinate_reference,
                 }
-                for place_id in place_ids
-                if (place := places_by_id.get(place_id)) is not None
+                for link in links
+                if (place := places_by_id.get(link.place_id)) is not None
             ],
             "routes": [
                 {

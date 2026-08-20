@@ -79,17 +79,18 @@ async def create_route_draft(
             "places": [
                 {
                     "id": place.place_id,
-                    "name": place.name,
+                    "name": link.display_name or place.name,
                     "address": place.address,
                     "district": place.district,
-                    "category": place.category,
-                    "tags": place.tags,
-                    "note": place.note,
+                    "category": link.category,
+                    "tags": link.tags,
+                    "note": link.shared_note,
+                    "custom_values": link.custom_values,
                     "longitude": place.longitude,
                     "latitude": place.latitude,
                 }
-                for place_id in place_ids
-                if (place := places_by_id.get(place_id)) is not None
+                for link in links
+                if (place := places_by_id.get(link.place_id)) is not None
             ],
         }
 
@@ -168,7 +169,9 @@ async def create_route_draft(
     with request.app.state.database.session_factory() as session, session.begin():
         _editable_map(session, map_id, user.shadow_user_id)
         linked_count = session.scalar(
-            select(func.count()).select_from(TravelMapPlace).where(
+            select(func.count())
+            .select_from(TravelMapPlace)
+            .where(
                 TravelMapPlace.map_id == map_id,
                 TravelMapPlace.place_id.in_(result.ordered_place_ids),
             )

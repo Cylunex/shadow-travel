@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.infrastructure.models import (
+    AuditEvent,
     ShadowUser,
     TravelMap,
+    TravelMapFieldDefinition,
     TravelMapMember,
     TravelMapPlace,
     TravelPhoto,
@@ -21,7 +23,10 @@ from shadow_travel.infrastructure.models import (
     TravelRoute,
     TravelRouteStop,
     TravelVisit,
+    TravelVisitMapShare,
+    TravelVisitRecord,
 )
+from shadow_travel.integrations.media import MediaGatewayError, MediaGatewayNotConfigured
 
 router = APIRouter(prefix="/api/browser/v1", tags=["travel"])
 
@@ -38,7 +43,23 @@ class MapCreate(BaseModel):
     accent: str = Field(default="#315d4e", pattern=r"^#[0-9a-fA-F]{6}$")
     accent_soft: str = Field(default="#dfe9e2", pattern=r"^#[0-9a-fA-F]{6}$")
     emoji: str = Field(default="行", min_length=1, max_length=8)
+    progress_enabled: bool = False
+    progress_mode: Literal["all", "any"] = "all"
+    progress_target: int | None = Field(default=None, ge=1, le=10_000)
+    progress_start_date: date | None = None
+    progress_end_date: date | None = None
     route_enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_progress(self) -> MapCreate:
+        _validate_progress_values(
+            self.progress_enabled,
+            self.progress_mode,
+            self.progress_target,
+            self.progress_start_date,
+            self.progress_end_date,
+        )
+        return self
 
 
 class MapUpdate(BaseModel):
@@ -50,6 +71,11 @@ class MapUpdate(BaseModel):
     accent: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     accent_soft: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     emoji: str | None = Field(default=None, min_length=1, max_length=8)
+    progress_enabled: bool | None = None
+    progress_mode: Literal["all", "any"] | None = None
+    progress_target: int | None = Field(default=None, ge=1, le=10_000)
+    progress_start_date: date | None = None
+    progress_end_date: date | None = None
     route_enabled: bool | None = None
     archived: bool | None = None
 
@@ -74,9 +100,13 @@ class PlaceCreate(BaseModel):
     provider_place_id: str | None = Field(default=None, max_length=255)
     recommended: str | None = Field(default=None, max_length=300)
     price: str | None = Field(default=None, max_length=80)
+    display_name: str | None = Field(default=None, max_length=200)
+    custom_values: dict[str, object] = Field(default_factory=dict)
+    counts_toward_progress: bool = True
 
 
 class PlaceUpdate(BaseModel):
+    map_id: str | None = Field(default=None, max_length=36)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     address: str | None = Field(default=None, max_length=500)
     district: str | None = Field(default=None, max_length=100)
@@ -90,6 +120,10 @@ class PlaceUpdate(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     coordinate_reference: str | None = Field(default=None, max_length=16)
+    display_name: str | None = Field(default=None, max_length=200)
+    custom_values: dict[str, object] | None = None
+    counts_toward_progress: bool | None = None
+    expected_version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_coordinate_pair(self) -> PlaceUpdate:
@@ -104,6 +138,7 @@ class PlaceUpdate(BaseModel):
 
 class PreferenceUpdate(BaseModel):
     preference: Preference
+    map_id: str | None = Field(default=None, max_length=36)
 
 
 class VisitCreate(BaseModel):
@@ -111,12 +146,16 @@ class VisitCreate(BaseModel):
     visited_on: date = Field(default_factory=date.today)
     note: str = Field(default="", max_length=10_000)
     rating: int | None = Field(default=None, ge=1, le=5)
+    share_completion: bool = True
+    record_visibility: Literal["private", "shared"] = "private"
 
 
 class VisitUpdate(BaseModel):
     visited_on: date | None = None
     note: str | None = Field(default=None, max_length=10_000)
     rating: int | None = Field(default=None, ge=1, le=5)
+    share_completion: bool | None = None
+    record_visibility: Literal["private", "shared"] | None = None
 
 
 class RouteCreate(BaseModel):
@@ -201,6 +240,42 @@ def _accessible_place(session: Session, place_id: str, user_id: str) -> TravelPl
     return place
 
 
+def _accessible_map_point(
+    session: Session,
+    place_id: str,
+    user_id: str,
+    *,
+    requested_map_id: str | None,
+) -> TravelMapPlace:
+    statement = (
+        select(TravelMapPlace)
+        .join(TravelMapMember, TravelMapMember.map_id == TravelMapPlace.map_id)
+        .where(
+            TravelMapPlace.place_id == place_id,
+            TravelMapMember.shadow_user_id == user_id,
+        )
+        .order_by(TravelMapPlace.added_at)
+    )
+    if requested_map_id:
+        statement = statement.where(TravelMapPlace.map_id == requested_map_id)
+    link = session.scalars(statement).first()
+    if link is None:
+        raise HTTPException(status_code=404, detail={"code": "travel_map_point_not_found"})
+    return link
+
+
+def _editable_map_point(
+    session: Session,
+    place_id: str,
+    user_id: str,
+    *,
+    requested_map_id: str | None,
+) -> TravelMapPlace:
+    link = _accessible_map_point(session, place_id, user_id, requested_map_id=requested_map_id)
+    _editable_map(session, link.map_id, user_id)
+    return link
+
+
 @router.get("/workspace")
 def workspace(
     request: Request,
@@ -228,52 +303,75 @@ def workspace(
             if place_ids
             else []
         )
+        places_by_id = {item.place_id: item for item in places}
+        places = [places_by_id[place_id] for place_id in place_ids if place_id in places_by_id]
         preferences = {
-            item.place_id: item.preference
+            (item.map_id, item.place_id): item.preference
             for item in session.scalars(
                 select(TravelPlacePreference).where(
                     TravelPlacePreference.shadow_user_id == user.shadow_user_id,
+                    TravelPlacePreference.map_id.in_(map_ids),
                     TravelPlacePreference.place_id.in_(place_ids),
                 )
             ).all()
         }
-        visits = session.scalars(
-            select(TravelVisit)
-            .where(
-                TravelVisit.shadow_user_id == user.shadow_user_id,
-                TravelVisit.place_id.in_(place_ids),
-            )
-            .order_by(TravelVisit.visited_on.desc(), TravelVisit.created_at.desc())
-        ).all() if place_ids else []
-        photo_counts_by_place = dict(
-            session.execute(
-                select(TravelPhoto.place_id, func.count(TravelPhoto.photo_id))
+        visits = (
+            session.scalars(
+                select(TravelVisit)
                 .where(
-                    TravelPhoto.map_id.in_(map_ids),
-                    TravelPhoto.place_id.in_(place_ids),
+                    TravelVisit.shadow_user_id == user.shadow_user_id,
+                    TravelVisit.place_id.in_(place_ids),
                 )
-                .group_by(TravelPhoto.place_id)
+                .order_by(TravelVisit.visited_on.desc(), TravelVisit.created_at.desc())
             ).all()
-        ) if place_ids else {}
+            if place_ids
+            else []
+        )
         visit_ids = [visit.visit_id for visit in visits]
-        photo_counts_by_visit = dict(
-            session.execute(
-                select(TravelPhoto.visit_id, func.count(TravelPhoto.photo_id))
-                .where(TravelPhoto.visit_id.in_(visit_ids))
-                .group_by(TravelPhoto.visit_id)
+        records = (
+            session.scalars(
+                select(TravelVisitRecord).where(TravelVisitRecord.visit_id.in_(visit_ids))
             ).all()
-        ) if visit_ids else {}
+            if visit_ids
+            else []
+        )
+        records_by_visit = {record.visit_id: record for record in records}
+        record_ids = [record.visit_record_id for record in records]
+        photo_counts_by_visit = (
+            dict(
+                session.execute(
+                    select(TravelVisitRecord.visit_id, func.count(TravelPhoto.photo_id))
+                    .join(
+                        TravelPhoto,
+                        TravelPhoto.visit_record_id == TravelVisitRecord.visit_record_id,
+                    )
+                    .where(TravelPhoto.visit_record_id.in_(record_ids))
+                    .group_by(TravelVisitRecord.visit_id)
+                ).all()
+            )
+            if record_ids
+            else {}
+        )
+        photo_counts_by_place: dict[str, int] = {}
+        for visit in visits:
+            photo_counts_by_place[visit.place_id] = photo_counts_by_place.get(
+                visit.place_id, 0
+            ) + int(photo_counts_by_visit.get(visit.visit_id, 0))
         routes = session.scalars(
             select(TravelRoute)
             .where(TravelRoute.map_id.in_(map_ids))
             .order_by(TravelRoute.updated_at.desc())
         ).all()
         route_ids = [route.route_id for route in routes]
-        stops = session.scalars(
-            select(TravelRouteStop)
-            .where(TravelRouteStop.route_id.in_(route_ids))
-            .order_by(TravelRouteStop.route_id, TravelRouteStop.position)
-        ).all() if route_ids else []
+        stops = (
+            session.scalars(
+                select(TravelRouteStop)
+                .where(TravelRouteStop.route_id.in_(route_ids))
+                .order_by(TravelRouteStop.route_id, TravelRouteStop.position)
+            ).all()
+            if route_ids
+            else []
+        )
         member_rows = session.execute(
             select(TravelMapMember, ShadowUser)
             .join(ShadowUser, ShadowUser.shadow_user_id == TravelMapMember.shadow_user_id)
@@ -281,9 +379,13 @@ def workspace(
         ).all()
 
         maps_by_place: dict[str, list[str]] = {}
+        links_by_place: dict[str, list[TravelMapPlace]] = {}
+        links_by_map: dict[str, list[TravelMapPlace]] = {map_id: [] for map_id in map_ids}
         points_by_map: dict[str, list[str]] = {map_id: [] for map_id in map_ids}
         for link in links:
             maps_by_place.setdefault(link.place_id, []).append(link.map_id)
+            links_by_place.setdefault(link.place_id, []).append(link)
+            links_by_map.setdefault(link.map_id, []).append(link)
             points_by_map.setdefault(link.map_id, []).append(link.place_id)
         visits_by_place: dict[str, list[TravelVisit]] = {}
         for visit in visits:
@@ -305,6 +407,7 @@ def workspace(
                     points_by_map.get(item.map_id, []),
                     members_by_map.get(item.map_id, []),
                     visits_by_place,
+                    links_by_map.get(item.map_id, []),
                 )
                 for item in map_rows
             ],
@@ -313,13 +416,24 @@ def workspace(
                     item,
                     maps_by_place.get(item.place_id, []),
                     visits_by_place.get(item.place_id, []),
-                    preferences.get(item.place_id, "none"),
+                    preferences.get(
+                        (links_by_place.get(item.place_id, [None])[0].map_id, item.place_id),
+                        "none",
+                    )
+                    if links_by_place.get(item.place_id)
+                    else "none",
                     int(photo_counts_by_place.get(item.place_id, 0)),
+                    links=links_by_place.get(item.place_id, []),
+                    preferences=preferences,
                 )
                 for item in places
             ],
             "visits": [
-                _visit_payload(item, int(photo_counts_by_visit.get(item.visit_id, 0)))
+                _visit_payload(
+                    item,
+                    records_by_visit.get(item.visit_id),
+                    int(photo_counts_by_visit.get(item.visit_id, 0)),
+                )
                 for item in visits
             ],
             "routes": [
@@ -346,6 +460,11 @@ def create_map(
             accent=body.accent.lower(),
             accent_soft=body.accent_soft.lower(),
             emoji=body.emoji.strip(),
+            progress_enabled=body.progress_enabled,
+            progress_mode=body.progress_mode,
+            progress_target=body.progress_target,
+            progress_start_date=body.progress_start_date,
+            progress_end_date=body.progress_end_date,
             route_enabled=body.route_enabled,
         )
         session.add(travel_map)
@@ -357,11 +476,13 @@ def create_map(
                 role="owner",
             )
         )
+        _audit_map(request, session, user.shadow_user_id, travel_map.map_id, "travel_map.create")
         return _map_payload(
             travel_map,
             [],
             [_member_from_authenticated(user)],
             {},
+            [],
         )
 
 
@@ -374,12 +495,22 @@ def update_map(
 ) -> dict[str, object]:
     with _session(request) as session, session.begin():
         travel_map = _editable_map(session, map_id, user.shadow_user_id)
-        for name, value in body.model_dump(exclude_unset=True).items():
+        values = body.model_dump(exclude_unset=True)
+        progress_values = {
+            "enabled": values.get("progress_enabled", travel_map.progress_enabled),
+            "mode": values.get("progress_mode", travel_map.progress_mode),
+            "target": values.get("progress_target", travel_map.progress_target),
+            "start": values.get("progress_start_date", travel_map.progress_start_date),
+            "end": values.get("progress_end_date", travel_map.progress_end_date),
+        }
+        _validate_progress_values(**progress_values)
+        for name, value in values.items():
             if isinstance(value, str):
                 value = value.strip()
             if name == "country_code" and value is not None:
                 value = value.upper()
             setattr(travel_map, name, value)
+        _audit_map(request, session, user.shadow_user_id, map_id, "travel_map.update")
         if body.route_enabled:
             session.flush()
             _extend_default_route(session, travel_map, user.shadow_user_id)
@@ -404,14 +535,7 @@ def delete_map(
         )
         if travel_map is None:
             raise HTTPException(status_code=404, detail={"code": "travel_map_not_found"})
-        photo_count = session.scalar(
-            select(func.count()).select_from(TravelPhoto).where(TravelPhoto.map_id == map_id)
-        )
-        if photo_count:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "travel_map_contains_photos", "photo_count": photo_count},
-            )
+        _audit_map(request, session, user.shadow_user_id, map_id, "travel_map.delete")
         session.delete(travel_map)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -429,7 +553,6 @@ def add_place(
         if body.provider_place_id:
             place = session.scalar(
                 select(TravelPlace).where(
-                    TravelPlace.owner_user_id == user.shadow_user_id,
                     TravelPlace.provider == body.provider,
                     TravelPlace.provider_place_id == body.provider_place_id,
                 )
@@ -443,16 +566,11 @@ def add_place(
                 district=body.district.strip(),
                 city=body.city.strip(),
                 country_code=body.country_code.upper(),
-                category=body.category.strip() or "地点",
-                tags=[tag.strip() for tag in body.tags if tag.strip()],
-                note=body.note.strip(),
                 longitude=body.longitude,
                 latitude=body.latitude,
                 coordinate_reference=body.coordinate_reference.upper(),
                 provider=body.provider,
                 provider_place_id=body.provider_place_id,
-                recommended=body.recommended,
-                price=body.price,
             )
             session.add(place)
             session.flush()
@@ -463,21 +581,36 @@ def add_place(
                     TravelMapPlace.map_id == map_id
                 )
             )
-            session.add(
-                TravelMapPlace(
-                    map_id=map_id,
-                    place_id=place.place_id,
-                    position=int(position or 0) + 1,
-                    added_by=user.shadow_user_id,
-                )
+            link = TravelMapPlace(
+                map_id=map_id,
+                place_id=place.place_id,
+                display_name=body.display_name.strip() if body.display_name else None,
+                category=body.category.strip() or "地点",
+                tags=_clean_tags(body.tags),
+                shared_note=body.note.strip(),
+                custom_values=_compat_custom_values(
+                    body.custom_values, body.recommended, body.price
+                ),
+                counts_toward_progress=body.counts_toward_progress,
+                position=int(position or 0) + 1,
+                added_by=user.shadow_user_id,
             )
+            session.add(link)
             travel_map.updated_at = datetime.now(travel_map.updated_at.tzinfo)
             session.flush()
             _extend_default_route(session, travel_map, user.shadow_user_id)
+            _audit_map(
+                request,
+                session,
+                user.shadow_user_id,
+                map_id,
+                "map_point.create",
+                {"place_id": place.place_id},
+            )
         map_ids = session.scalars(
             select(TravelMapPlace.map_id).where(TravelMapPlace.place_id == place.place_id)
         ).all()
-        return _place_payload(place, list(map_ids), [], "none")
+        return _place_payload(place, list(map_ids), [], "none", links=[link])
 
 
 @router.post(
@@ -504,6 +637,11 @@ def link_existing_place(
                 TravelMapPlace(
                     map_id=map_id,
                     place_id=place_id,
+                    category="地点",
+                    tags=[],
+                    shared_note="",
+                    custom_values={},
+                    counts_toward_progress=True,
                     position=int(position or 0) + 1,
                     added_by=user.shadow_user_id,
                 )
@@ -511,21 +649,31 @@ def link_existing_place(
             travel_map.updated_at = datetime.now(travel_map.updated_at.tzinfo)
             session.flush()
             _extend_default_route(session, travel_map, user.shadow_user_id)
+            _audit_map(
+                request,
+                session,
+                user.shadow_user_id,
+                map_id,
+                "map_point.link",
+                {"place_id": place_id},
+            )
         map_ids = session.scalars(
             select(TravelMapPlace.map_id).where(TravelMapPlace.place_id == place_id)
         ).all()
-        preference = session.get(TravelPlacePreference, (place_id, user.shadow_user_id))
+        preference = session.get(TravelPlacePreference, (map_id, place_id, user.shadow_user_id))
         visits = session.scalars(
             select(TravelVisit).where(
                 TravelVisit.place_id == place_id,
                 TravelVisit.shadow_user_id == user.shadow_user_id,
             )
         ).all()
+        link = session.get(TravelMapPlace, (map_id, place_id))
         return _place_payload(
             place,
             list(map_ids),
             list(visits),
             preference.preference if preference else "none",
+            links=[link] if link else [],
         )
 
 
@@ -538,7 +686,23 @@ def update_place(
 ) -> dict[str, object]:
     with _session(request) as session, session.begin():
         place = _editable_place(session, place_id, user.shadow_user_id)
-        for name, value in body.model_dump(exclude_unset=True).items():
+        values = body.model_dump(exclude_unset=True)
+        map_content_names = {
+            "category",
+            "tags",
+            "note",
+            "recommended",
+            "price",
+            "display_name",
+            "custom_values",
+            "counts_toward_progress",
+            "expected_version",
+            "map_id",
+        }
+        fact_values = {
+            name: value for name, value in values.items() if name not in map_content_names
+        }
+        for name, value in fact_values.items():
             if isinstance(value, str):
                 value = value.strip()
             if name in {"country_code", "coordinate_reference"} and value is not None:
@@ -546,7 +710,47 @@ def update_place(
             setattr(place, name, value)
         if body.name is not None:
             place.short_name = _short_name(body.name.strip())
-        return {"id": place.place_id, "updated": True}
+        content_values = {
+            name: value for name, value in values.items() if name in map_content_names
+        }
+        link = None
+        if content_values.keys() - {"map_id", "expected_version"}:
+            link = _editable_map_point(
+                session, place_id, user.shadow_user_id, requested_map_id=body.map_id
+            )
+            if body.expected_version is not None and link.version != body.expected_version:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "map_point_version_conflict", "current_version": link.version},
+                )
+            if body.category is not None:
+                link.category = body.category.strip() or "地点"
+            if body.tags is not None:
+                link.tags = _clean_tags(body.tags)
+            if body.note is not None:
+                link.shared_note = body.note.strip()
+            if body.display_name is not None:
+                link.display_name = body.display_name.strip() or None
+            if body.counts_toward_progress is not None:
+                link.counts_toward_progress = body.counts_toward_progress
+            custom = dict(link.custom_values)
+            if body.custom_values is not None:
+                custom = _validated_custom_values(session, link.map_id, body.custom_values)
+            if body.recommended is not None:
+                custom["recommended"] = body.recommended.strip()
+            if body.price is not None:
+                custom["price"] = body.price.strip()
+            link.custom_values = custom
+            link.version += 1
+            _audit_map(
+                request,
+                session,
+                user.shadow_user_id,
+                link.map_id,
+                "map_point.update",
+                {"place_id": place_id, "version": link.version},
+            )
+        return {"id": place.place_id, "updated": True, "version": link.version if link else None}
 
 
 @router.delete("/travel-maps/{map_id}/places/{place_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -558,17 +762,6 @@ def remove_place_from_map(
 ) -> Response:
     with _session(request) as session, session.begin():
         _editable_map(session, map_id, user.shadow_user_id)
-        photo_count = session.scalar(
-            select(func.count()).select_from(TravelPhoto).where(
-                TravelPhoto.map_id == map_id,
-                TravelPhoto.place_id == place_id,
-            )
-        )
-        if photo_count:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "travel_map_place_contains_photos", "photo_count": photo_count},
-            )
         session.execute(
             delete(TravelMapPlace).where(
                 TravelMapPlace.map_id == map_id,
@@ -584,8 +777,16 @@ def remove_place_from_map(
         )
         session.execute(
             update(TravelVisit)
-            .where(TravelVisit.map_id == map_id, TravelVisit.place_id == place_id)
-            .values(map_id=None)
+            .where(TravelVisit.source_map_id == map_id, TravelVisit.place_id == place_id)
+            .values(source_map_id=None)
+        )
+        _audit_map(
+            request,
+            session,
+            user.shadow_user_id,
+            map_id,
+            "map_point.remove",
+            {"place_id": place_id},
         )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -620,6 +821,7 @@ def update_place_order(
         if travel_map.route_enabled:
             session.flush()
             _extend_default_route(session, travel_map, user.shadow_user_id)
+        _audit_map(request, session, user.shadow_user_id, map_id, "map_points.reorder")
         return {"map_id": map_id, "place_ids": body.place_ids}
 
 
@@ -631,21 +833,25 @@ def set_preference(
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
 ) -> dict[str, str]:
     with _session(request) as session, session.begin():
-        _accessible_place(session, place_id, user.shadow_user_id)
-        preference = session.get(
-            TravelPlacePreference,
-            (place_id, user.shadow_user_id),
+        link = _accessible_map_point(
+            session, place_id, user.shadow_user_id, requested_map_id=body.map_id
         )
-        if preference is None:
-            preference = TravelPlacePreference(
-                place_id=place_id,
-                shadow_user_id=user.shadow_user_id,
-                preference=body.preference,
-            )
-            session.add(preference)
-        else:
-            preference.preference = body.preference
-        return {"preference": body.preference}
+        return _set_preference(session, link, user.shadow_user_id, body.preference)
+
+
+@router.put("/travel-maps/{map_id}/places/{place_id}/preference")
+def set_map_preference(
+    map_id: str,
+    place_id: str,
+    body: PreferenceUpdate,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
+) -> dict[str, str]:
+    with _session(request) as session, session.begin():
+        link = _accessible_map_point(
+            session, place_id, user.shadow_user_id, requested_map_id=map_id
+        )
+        return _set_preference(session, link, user.shadow_user_id, body.preference)
 
 
 @router.post("/places/{place_id}/visits", status_code=status.HTTP_201_CREATED)
@@ -665,14 +871,32 @@ def add_visit(
         visit = TravelVisit(
             place_id=place_id,
             shadow_user_id=user.shadow_user_id,
-            map_id=body.map_id,
+            source_map_id=body.map_id,
             visited_on=body.visited_on,
-            note=body.note.strip(),
-            rating=body.rating,
         )
         session.add(visit)
         session.flush()
-        return _visit_payload(visit)
+        if body.map_id and body.share_completion:
+            session.add(TravelVisitMapShare(visit_id=visit.visit_id, map_id=body.map_id))
+        record = None
+        if body.note.strip() or body.rating is not None:
+            if body.record_visibility == "shared" and not body.map_id:
+                raise HTTPException(
+                    status_code=422, detail={"code": "shared_record_requires_source_map"}
+                )
+            record = TravelVisitRecord(
+                visit_id=visit.visit_id,
+                note=body.note.strip(),
+                rating=body.rating,
+                visibility=body.record_visibility,
+                shared_map_id=body.map_id if body.record_visibility == "shared" else None,
+            )
+            session.add(record)
+            if record.shared_map_id and not body.share_completion:
+                session.add(
+                    TravelVisitMapShare(visit_id=visit.visit_id, map_id=record.shared_map_id)
+                )
+        return _visit_payload(visit, record)
 
 
 @router.patch("/visits/{visit_id}")
@@ -686,11 +910,39 @@ def update_visit(
         visit = session.get(TravelVisit, visit_id)
         if visit is None or visit.shadow_user_id != user.shadow_user_id:
             raise HTTPException(status_code=404, detail={"code": "travel_visit_not_found"})
-        for name, value in body.model_dump(exclude_unset=True).items():
-            if isinstance(value, str):
-                value = value.strip()
-            setattr(visit, name, value)
-        return _visit_payload(visit)
+        values = body.model_dump(exclude_unset=True)
+        if "visited_on" in values and values["visited_on"] is not None:
+            visit.visited_on = values["visited_on"]
+        record = session.scalar(
+            select(TravelVisitRecord).where(TravelVisitRecord.visit_id == visit_id)
+        )
+        record_fields = {"note", "rating", "record_visibility"}
+        if values.keys() & record_fields:
+            if record is None:
+                record = TravelVisitRecord(visit_id=visit_id)
+                session.add(record)
+            if "note" in values:
+                record.note = (values["note"] or "").strip()
+            if "rating" in values:
+                record.rating = values["rating"]
+            if "record_visibility" in values:
+                visibility = values["record_visibility"]
+                if visibility == "shared" and not visit.source_map_id:
+                    raise HTTPException(
+                        status_code=422, detail={"code": "shared_record_requires_source_map"}
+                    )
+                record.visibility = visibility
+                record.shared_map_id = visit.source_map_id if visibility == "shared" else None
+                if record.shared_map_id:
+                    _ensure_visit_share(session, visit_id, record.shared_map_id)
+        if "share_completion" in values and visit.source_map_id:
+            if values["share_completion"]:
+                _ensure_visit_share(session, visit_id, visit.source_map_id)
+            elif record is None or record.shared_map_id != visit.source_map_id:
+                share = session.get(TravelVisitMapShare, (visit_id, visit.source_map_id))
+                if share:
+                    session.delete(share)
+        return _visit_payload(visit, record)
 
 
 @router.delete("/visits/{visit_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -703,6 +955,23 @@ def delete_visit(
         visit = session.get(TravelVisit, visit_id)
         if visit is None or visit.shadow_user_id != user.shadow_user_id:
             raise HTTPException(status_code=404, detail={"code": "travel_visit_not_found"})
+        photos = session.scalars(
+            select(TravelPhoto)
+            .join(
+                TravelVisitRecord,
+                TravelVisitRecord.visit_record_id == TravelPhoto.visit_record_id,
+            )
+            .where(TravelVisitRecord.visit_id == visit_id)
+        ).all()
+        for photo in photos:
+            try:
+                request.app.state.media.delete(photo.media_id)
+            except MediaGatewayNotConfigured as exc:
+                raise HTTPException(status_code=503, detail={"code": "media_unavailable"}) from exc
+            except MediaGatewayError as exc:
+                raise HTTPException(
+                    status_code=502, detail={"code": "media_request_failed"}
+                ) from exc
         session.delete(visit)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -727,6 +996,14 @@ def create_route(
         session.add(route)
         session.flush()
         _replace_route_stops(session, route.route_id, body.stop_ids)
+        _audit_map(
+            request,
+            session,
+            user.shadow_user_id,
+            map_id,
+            "route.create",
+            {"route_id": route.route_id},
+        )
         return _route_payload(route, body.stop_ids)
 
 
@@ -750,6 +1027,14 @@ def update_route(
         if body.stop_ids is not None:
             _validate_route_places(session, route.map_id, body.stop_ids)
             _replace_route_stops(session, route.route_id, body.stop_ids)
+        _audit_map(
+            request,
+            session,
+            user.shadow_user_id,
+            route.map_id,
+            "route.update",
+            {"route_id": route.route_id},
+        )
         stops = session.scalars(
             select(TravelRouteStop.place_id)
             .where(TravelRouteStop.route_id == route.route_id)
@@ -769,6 +1054,14 @@ def delete_route(
         if route is None:
             raise HTTPException(status_code=404, detail={"code": "travel_route_not_found"})
         _editable_map(session, route.map_id, user.shadow_user_id)
+        _audit_map(
+            request,
+            session,
+            user.shadow_user_id,
+            route.map_id,
+            "route.delete",
+            {"route_id": route.route_id},
+        )
         session.delete(route)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -805,7 +1098,9 @@ def _validate_route_places(session: Session, map_id: str, stop_ids: list[str]) -
     if len(stop_ids) != len(set(stop_ids)):
         raise HTTPException(status_code=422, detail={"code": "duplicate_route_stop"})
     count = session.scalar(
-        select(func.count()).select_from(TravelMapPlace).where(
+        select(func.count())
+        .select_from(TravelMapPlace)
+        .where(
             TravelMapPlace.map_id == map_id,
             TravelMapPlace.place_id.in_(stop_ids),
         )
@@ -843,8 +1138,24 @@ def _map_payload(
     point_ids: list[str],
     members: list[dict[str, str]],
     visits_by_place: dict[str, list[TravelVisit]],
+    links: list[TravelMapPlace],
 ) -> dict[str, object]:
-    completed = sum(1 for place_id in point_ids if visits_by_place.get(place_id))
+    counted_ids = {link.place_id for link in links if link.counts_toward_progress}
+    completed_ids = {
+        place_id
+        for place_id in counted_ids
+        if any(
+            _visit_in_progress_period(visit, travel_map)
+            for visit in visits_by_place.get(place_id, [])
+        )
+    }
+    total = len(counted_ids)
+    target = (
+        min(travel_map.progress_target or total, total)
+        if travel_map.progress_mode == "any"
+        else total
+    )
+    completed = len(completed_ids)
     return {
         "id": travel_map.map_id,
         "title": travel_map.title,
@@ -857,7 +1168,18 @@ def _map_payload(
         "members": members,
         "completed": completed,
         "period": travel_map.period,
+        "progress": {
+            "enabled": travel_map.progress_enabled,
+            "mode": travel_map.progress_mode,
+            "target": target if travel_map.progress_enabled else None,
+            "completed": completed,
+            "total": total,
+            "start_date": _date_value(travel_map.progress_start_date),
+            "end_date": _date_value(travel_map.progress_end_date),
+            "is_complete": bool(travel_map.progress_enabled and target and completed >= target),
+        },
         "routeEnabled": travel_map.route_enabled,
+        "sourceMapId": travel_map.source_map_id,
         "updatedAt": travel_map.updated_at.date().isoformat(),
         "archived": travel_map.archived,
     }
@@ -869,7 +1191,13 @@ def _place_payload(
     visits: list[TravelVisit],
     preference: str,
     photo_count: int = 0,
+    *,
+    links: list[TravelMapPlace] | None = None,
+    preferences: dict[tuple[str, str], str] | None = None,
 ) -> dict[str, object]:
+    links = links or []
+    primary_link = links[0] if links else None
+    custom = primary_link.custom_values if primary_link else {}
     return {
         "id": place.place_id,
         "name": place.name,
@@ -877,9 +1205,9 @@ def _place_payload(
         "address": place.address,
         "district": place.district,
         "city": place.city,
-        "category": place.category,
-        "tags": place.tags,
-        "note": place.note,
+        "category": primary_link.category if primary_link else "地点",
+        "tags": primary_link.tags if primary_link else [],
+        "note": primary_link.shared_note if primary_link else "",
         "coordinate": {
             "x": 25 + abs(place.longitude * 17) % 55,
             "y": 20 + abs(place.latitude * 19) % 60,
@@ -891,23 +1219,45 @@ def _place_payload(
         "mapIds": map_ids,
         "visitedBy": ["me"] if visits else [],
         "preference": preference,
-        "recommended": place.recommended,
-        "price": place.price,
+        "recommended": custom.get("recommended"),
+        "price": custom.get("price"),
+        "mapPoints": [
+            {
+                "mapId": link.map_id,
+                "displayName": link.display_name,
+                "category": link.category,
+                "tags": link.tags,
+                "note": link.shared_note,
+                "customValues": link.custom_values,
+                "countsTowardProgress": link.counts_toward_progress,
+                "position": link.position,
+                "version": link.version,
+                "preference": (preferences or {}).get((link.map_id, place.place_id), "none"),
+            }
+            for link in links
+        ],
         "photoCount": photo_count,
         "photos": [],
     }
 
 
-def _visit_payload(visit: TravelVisit, photo_count: int = 0) -> dict[str, object]:
+def _visit_payload(
+    visit: TravelVisit,
+    record: TravelVisitRecord | None = None,
+    photo_count: int = 0,
+) -> dict[str, object]:
     return {
         "id": visit.visit_id,
         "placeId": visit.place_id,
         "date": visit.visited_on.isoformat(),
         "displayDate": visit.visited_on.isoformat(),
-        "note": visit.note,
-        "rating": visit.rating,
+        "note": record.note if record else "",
+        "rating": record.rating if record else None,
+        "recordId": record.visit_record_id if record else None,
+        "recordVisibility": record.visibility if record else None,
+        "sharedMapId": record.shared_map_id if record else None,
         "photoCount": photo_count,
-        "mapId": visit.map_id,
+        "mapId": visit.source_map_id,
     }
 
 
@@ -922,6 +1272,137 @@ def _route_payload(route: TravelRoute, stop_ids: list[str]) -> dict[str, object]
         "duration": _format_duration(route.duration_seconds),
         "note": route.note,
     }
+
+
+def _set_preference(
+    session: Session,
+    link: TravelMapPlace,
+    user_id: str,
+    preference_value: Preference,
+) -> dict[str, str]:
+    preference = session.get(TravelPlacePreference, (link.map_id, link.place_id, user_id))
+    if preference is None:
+        preference = TravelPlacePreference(
+            map_id=link.map_id,
+            place_id=link.place_id,
+            shadow_user_id=user_id,
+            preference=preference_value,
+        )
+        session.add(preference)
+    else:
+        preference.preference = preference_value
+    return {"map_id": link.map_id, "preference": preference_value}
+
+
+def _audit_map(
+    request: Request,
+    session: Session,
+    actor_id: str,
+    map_id: str,
+    action: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    session.add(
+        AuditEvent(
+            actor_type="user",
+            actor_id=actor_id,
+            action=action,
+            resource_type="travel_map",
+            resource_id=map_id,
+            request_id=request.state.request_id,
+            result="success",
+            details=details,
+        )
+    )
+
+
+def _ensure_visit_share(session: Session, visit_id: str, map_id: str) -> None:
+    if session.get(TravelVisitMapShare, (visit_id, map_id)) is None:
+        session.add(TravelVisitMapShare(visit_id=visit_id, map_id=map_id))
+
+
+def _validate_progress_values(
+    enabled: bool,
+    mode: str,
+    target: int | None,
+    start: date | None,
+    end: date | None,
+) -> None:
+    if mode == "any" and enabled and target is None:
+        raise ValueError("progress_target is required when progress_mode is any")
+    if start and end and start > end:
+        raise ValueError("progress_start_date must not be after progress_end_date")
+
+
+def _visit_in_progress_period(visit: TravelVisit, travel_map: TravelMap) -> bool:
+    if travel_map.progress_start_date and visit.visited_on < travel_map.progress_start_date:
+        return False
+    return not travel_map.progress_end_date or visit.visited_on <= travel_map.progress_end_date
+
+
+def _date_value(value: date | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _clean_tags(tags: list[str]) -> list[str]:
+    return list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))[:20]
+
+
+def _compat_custom_values(
+    custom_values: dict[str, object], recommended: str | None, price: str | None
+) -> dict[str, object]:
+    values = dict(custom_values)
+    if recommended:
+        values["recommended"] = recommended.strip()
+    if price:
+        values["price"] = price.strip()
+    return values
+
+
+def _validated_custom_values(
+    session: Session, map_id: str, values: dict[str, object]
+) -> dict[str, object]:
+    definitions = session.scalars(
+        select(TravelMapFieldDefinition).where(TravelMapFieldDefinition.map_id == map_id)
+    ).all()
+    by_key = {item.field_key: item for item in definitions}
+    unknown = set(values) - set(by_key) - {"recommended", "price"}
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "unknown_custom_fields", "fields": sorted(unknown)},
+        )
+    result: dict[str, object] = {}
+    for key, value in values.items():
+        definition = by_key.get(key)
+        if definition is None:
+            result[key] = value
+            continue
+        if definition.field_type == "number" and not isinstance(value, int | float):
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_custom_field", "field": key}
+            )
+        if definition.field_type == "boolean" and not isinstance(value, bool):
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_custom_field", "field": key}
+            )
+        if definition.field_type in {"text", "select"} and not isinstance(value, str):
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_custom_field", "field": key}
+            )
+        if definition.field_type == "select" and value not in definition.options:
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_custom_field", "field": key}
+            )
+        result[key] = value
+    missing = [
+        item.field_key for item in definitions if item.required and item.field_key not in result
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422, detail={"code": "required_custom_fields_missing", "fields": missing}
+        )
+    return result
 
 
 def _short_name(name: str) -> str:

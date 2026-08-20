@@ -28,8 +28,12 @@ def upgrade() -> None:
         sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["accepted_by"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["created_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["accepted_by"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["created_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("invitation_id"),
         sa.UniqueConstraint("token_hash", name="uq_travel_map_invitation_token"),
@@ -53,10 +57,13 @@ def upgrade() -> None:
         sa.Column("longitude", sa.Float(), nullable=True),
         sa.Column("latitude", sa.Float(), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("completed_media_id", sa.String(length=255), nullable=True),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["place_id"], ["travel_places.place_id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["visit_id"], ["travel_visits.visit_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("intent_id"),
@@ -73,9 +80,7 @@ def upgrade() -> None:
         sa.Column("photo_id", sa.String(length=36), nullable=False),
         sa.Column("media_id", sa.String(length=255), nullable=False),
         sa.Column("owner_user_id", sa.String(length=36), nullable=False),
-        sa.Column("map_id", sa.String(length=36), nullable=False),
-        sa.Column("place_id", sa.String(length=36), nullable=False),
-        sa.Column("visit_id", sa.String(length=36), nullable=True),
+        sa.Column("visit_record_id", sa.String(length=36), nullable=False),
         sa.Column("caption", sa.String(length=500), nullable=False),
         sa.Column("captured_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("longitude", sa.Float(), nullable=True),
@@ -83,15 +88,42 @@ def upgrade() -> None:
         sa.Column("location_visibility", sa.String(length=16), nullable=False),
         sa.Column("exif_policy", sa.String(length=32), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["place_id"], ["travel_places.place_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["visit_id"], ["travel_visits.visit_id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
+            ["visit_record_id"], ["travel_visit_records.visit_record_id"], ondelete="CASCADE"
+        ),
         sa.PrimaryKeyConstraint("photo_id"),
         sa.UniqueConstraint("media_id", name="uq_travel_photo_media_id"),
     )
-    op.create_index("ix_travel_photos_place_created", "travel_photos", ["place_id", "created_at"])
-    op.create_index("ix_travel_photos_visit_created", "travel_photos", ["visit_id", "created_at"])
+    op.create_index(
+        "ix_travel_photos_record_created", "travel_photos", ["visit_record_id", "created_at"]
+    )
+
+    op.create_table(
+        "travel_share_links",
+        sa.Column("share_link_id", sa.String(length=36), nullable=False),
+        sa.Column("map_id", sa.String(length=36), nullable=False),
+        sa.Column("created_by", sa.String(length=36), nullable=False),
+        sa.Column("token_hash", sa.String(length=64), nullable=False),
+        sa.Column("label", sa.String(length=120), nullable=False),
+        sa.Column("view_state", sa.JSON(), nullable=False),
+        sa.Column("include_shared_records", sa.Boolean(), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_accessed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["created_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("share_link_id"),
+        sa.UniqueConstraint("token_hash", name="uq_travel_share_link_token"),
+    )
+    op.create_index(
+        "ix_travel_share_links_map_created", "travel_share_links", ["map_id", "created_at"]
+    )
 
     op.create_table(
         "travel_agent_map_grants",
@@ -101,7 +133,9 @@ def upgrade() -> None:
         sa.Column("allow_read", sa.Boolean(), nullable=False),
         sa.Column("allow_drafts", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["granted_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["granted_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("map_id", "agent_id"),
     )
@@ -121,8 +155,12 @@ def upgrade() -> None:
         sa.Column("applied_resource_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["created_by_user_id"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["reviewed_by"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["created_by_user_id"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"
+        ),
+        sa.ForeignKeyConstraint(
+            ["reviewed_by"], ["shadow_users.shadow_user_id"], ondelete="SET NULL"
+        ),
         sa.PrimaryKeyConstraint("draft_id"),
     )
     op.create_index(
@@ -136,8 +174,9 @@ def downgrade() -> None:
     op.drop_index("ix_travel_agent_drafts_map_status", table_name="travel_agent_drafts")
     op.drop_table("travel_agent_drafts")
     op.drop_table("travel_agent_map_grants")
-    op.drop_index("ix_travel_photos_visit_created", table_name="travel_photos")
-    op.drop_index("ix_travel_photos_place_created", table_name="travel_photos")
+    op.drop_index("ix_travel_share_links_map_created", table_name="travel_share_links")
+    op.drop_table("travel_share_links")
+    op.drop_index("ix_travel_photos_record_created", table_name="travel_photos")
     op.drop_table("travel_photos")
     op.drop_index("ix_travel_media_upload_owner_expires", table_name="travel_media_upload_intents")
     op.drop_table("travel_media_upload_intents")

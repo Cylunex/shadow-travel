@@ -11,9 +11,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from shadow_travel.api.travel import (
+    _clean_tags,
     _replace_route_stops,
     _route_payload,
+    _short_name,
     _validate_route_places,
+    _validated_custom_values,
 )
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
@@ -25,6 +28,8 @@ from shadow_travel.infrastructure.models import (
     TravelMap,
     TravelMapInvitation,
     TravelMapMember,
+    TravelMapPlace,
+    TravelPlace,
     TravelRoute,
     TravelRouteStop,
 )
@@ -67,6 +72,56 @@ class RouteDraftPayload(BaseModel):
     ordered_place_ids: list[str] = Field(min_length=2, max_length=16)
     mode: Literal["walking", "driving", "transit", "bicycling"] = "walking"
     summary: str = Field(default="", max_length=10_000)
+
+
+class MapNoteOperation(BaseModel):
+    place_id: str = Field(max_length=36)
+    expected_version: int = Field(ge=1)
+    category: str | None = Field(default=None, max_length=100)
+    tags: list[str] | None = Field(default=None, max_length=20)
+    note: str | None = Field(default=None, max_length=10_000)
+    custom_values: dict[str, object] | None = None
+
+
+class MapNotesDraftPayload(BaseModel):
+    operations: list[MapNoteOperation] = Field(min_length=1, max_length=500)
+
+
+class PlaceListItem(BaseModel):
+    place_id: str | None = Field(default=None, max_length=36)
+    name: str | None = Field(default=None, max_length=200)
+    address: str = Field(default="", max_length=500)
+    city: str | None = Field(default=None, max_length=100)
+    district: str = Field(default="", max_length=100)
+    country_code: str = Field(default="CN", min_length=2, max_length=2)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    coordinate_reference: str = Field(default="GCJ02", max_length=16)
+    provider: Literal["amap", "manual"] = "manual"
+    provider_place_id: str | None = Field(default=None, max_length=255)
+    display_name: str | None = Field(default=None, max_length=200)
+    category: str = Field(default="地点", max_length=100)
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    note: str = Field(default="", max_length=10_000)
+    custom_values: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_existing_or_verified_candidate(self) -> PlaceListItem:
+        if self.place_id:
+            return self
+        if not (
+            self.name
+            and self.city
+            and self.longitude is not None
+            and self.latitude is not None
+            and self.provider_place_id
+        ):
+            raise ValueError("new place candidates require verified provider data")
+        return self
+
+
+class PlaceListDraftPayload(BaseModel):
+    points: list[PlaceListItem] = Field(min_length=1, max_length=1000)
 
 
 def _session(request: Request) -> Session:
@@ -493,6 +548,15 @@ def apply_agent_draft(
                 "draft": _agent_draft_payload(draft),
                 "route": _route_payload(existing, list(stop_ids)),
             }
+        if draft.status == "applied":
+            return {
+                "draft": _agent_draft_payload(draft),
+                "result": draft.payload.get("_application_result", {}),
+            }
+        if draft.draft_type == "map-notes":
+            return _apply_map_notes_draft(session, request, user, draft)
+        if draft.draft_type == "place-list":
+            return _apply_place_list_draft(session, request, user, draft)
         if draft.draft_type != "route":
             raise HTTPException(status_code=422, detail={"code": "agent_draft_apply_unsupported"})
         try:
@@ -531,6 +595,177 @@ def apply_agent_draft(
             "draft": _agent_draft_payload(draft),
             "route": _route_payload(route, payload.ordered_place_ids),
         }
+
+
+def _apply_map_notes_draft(
+    session: Session,
+    request: Request,
+    user: AuthenticatedUser,
+    draft: TravelAgentDraft,
+) -> dict[str, object]:
+    try:
+        payload = MapNotesDraftPayload.model_validate(draft.payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "travel_agent_draft_invalid"}) from exc
+    if len({item.place_id for item in payload.operations}) != len(payload.operations):
+        raise HTTPException(status_code=422, detail={"code": "duplicate_draft_place"})
+    updated: list[dict[str, object]] = []
+    for operation in payload.operations:
+        link = session.get(TravelMapPlace, (draft.map_id, operation.place_id))
+        if link is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "travel_map_changed", "place_id": operation.place_id},
+            )
+        if link.version != operation.expected_version:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "map_point_version_conflict",
+                    "place_id": operation.place_id,
+                    "current_version": link.version,
+                },
+            )
+        if operation.category is not None:
+            link.category = operation.category.strip() or "地点"
+        if operation.tags is not None:
+            link.tags = _clean_tags(operation.tags)
+        if operation.note is not None:
+            link.shared_note = operation.note.strip()
+        if operation.custom_values is not None:
+            link.custom_values = _validated_custom_values(
+                session, draft.map_id, operation.custom_values
+            )
+        link.version += 1
+        updated.append({"place_id": link.place_id, "version": link.version})
+    result: dict[str, object] = {"updated": updated}
+    _finish_non_route_draft(draft, user.shadow_user_id, "travel_map_points", result)
+    _audit(
+        session,
+        request,
+        user,
+        action="travel.agent_draft.apply",
+        resource_type="travel_agent_draft",
+        resource_id=draft.draft_id,
+        details={"map_id": draft.map_id, "draft_type": draft.draft_type, "count": len(updated)},
+    )
+    return {"draft": _agent_draft_payload(draft), "result": result}
+
+
+def _apply_place_list_draft(
+    session: Session,
+    request: Request,
+    user: AuthenticatedUser,
+    draft: TravelAgentDraft,
+) -> dict[str, object]:
+    try:
+        payload = PlaceListDraftPayload.model_validate(draft.payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "travel_agent_draft_invalid"}) from exc
+    existing_links = session.scalars(
+        select(TravelMapPlace)
+        .where(TravelMapPlace.map_id == draft.map_id)
+        .order_by(TravelMapPlace.position)
+    ).all()
+    position = max((item.position for item in existing_links), default=-1)
+    linked: list[str] = []
+    skipped: list[str] = []
+    for item in payload.points:
+        place = None
+        if item.place_id:
+            place = session.scalar(
+                select(TravelPlace)
+                .outerjoin(TravelMapPlace, TravelMapPlace.place_id == TravelPlace.place_id)
+                .outerjoin(
+                    TravelMapMember,
+                    (TravelMapMember.map_id == TravelMapPlace.map_id)
+                    & (TravelMapMember.shadow_user_id == user.shadow_user_id),
+                )
+                .where(
+                    TravelPlace.place_id == item.place_id,
+                    (TravelPlace.owner_user_id == user.shadow_user_id)
+                    | (TravelMapMember.shadow_user_id == user.shadow_user_id),
+                )
+                .distinct()
+            )
+        else:
+            if draft.agent_id != "travel-place-extractor":
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "external_draft_place_not_verified"},
+                )
+            place = session.scalar(
+                select(TravelPlace).where(
+                    TravelPlace.provider == item.provider,
+                    TravelPlace.provider_place_id == item.provider_place_id,
+                )
+            )
+            if place is None:
+                place = TravelPlace(
+                    owner_user_id=user.shadow_user_id,
+                    name=(item.name or "").strip(),
+                    short_name=_short_name((item.name or "").strip()),
+                    address=item.address.strip(),
+                    district=item.district.strip(),
+                    city=(item.city or "").strip(),
+                    country_code=item.country_code.upper(),
+                    longitude=item.longitude or 0,
+                    latitude=item.latitude or 0,
+                    coordinate_reference=item.coordinate_reference.upper(),
+                    provider=item.provider,
+                    provider_place_id=item.provider_place_id,
+                )
+                session.add(place)
+                session.flush()
+        if place is None:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "draft_place_not_accessible", "place_id": item.place_id},
+            )
+        if session.get(TravelMapPlace, (draft.map_id, place.place_id)):
+            skipped.append(place.place_id)
+            continue
+        position += 1
+        session.add(
+            TravelMapPlace(
+                map_id=draft.map_id,
+                place_id=place.place_id,
+                display_name=item.display_name.strip() if item.display_name else None,
+                category=item.category.strip() or "地点",
+                tags=_clean_tags(item.tags),
+                shared_note=item.note.strip(),
+                custom_values=_validated_custom_values(session, draft.map_id, item.custom_values),
+                position=position,
+                added_by=user.shadow_user_id,
+            )
+        )
+        linked.append(place.place_id)
+    result = {"linked_place_ids": linked, "skipped_place_ids": skipped}
+    _finish_non_route_draft(draft, user.shadow_user_id, "travel_map_points", result)
+    _audit(
+        session,
+        request,
+        user,
+        action="travel.agent_draft.apply",
+        resource_type="travel_agent_draft",
+        resource_id=draft.draft_id,
+        details={"map_id": draft.map_id, "draft_type": draft.draft_type, "count": len(linked)},
+    )
+    return {"draft": _agent_draft_payload(draft), "result": result}
+
+
+def _finish_non_route_draft(
+    draft: TravelAgentDraft,
+    reviewer_id: str,
+    resource_type: str,
+    result: dict[str, object],
+) -> None:
+    draft.status = "applied"
+    draft.reviewed_by = reviewer_id
+    draft.reviewed_at = datetime.now(UTC)
+    draft.applied_resource_type = resource_type
+    draft.applied_resource_id = None
+    draft.payload = {**draft.payload, "_application_result": result}
 
 
 def _invitation_payload(invitation: TravelMapInvitation) -> dict[str, object]:

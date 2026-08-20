@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from shadow_travel.api.travel import _accessible_map, _editable_map
+from shadow_travel.api.travel import _accessible_map, _ensure_visit_share
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.infrastructure.models import (
@@ -16,6 +16,7 @@ from shadow_travel.infrastructure.models import (
     TravelMediaUploadIntent,
     TravelPhoto,
     TravelVisit,
+    TravelVisitRecord,
 )
 from shadow_travel.integrations.media import (
     MediaGateway,
@@ -99,15 +100,32 @@ def list_photos(
     with _session(request) as session:
         _accessible_map(session, map_id, user.shadow_user_id)
         _linked_place(session, map_id, place_id)
-        photos = session.scalars(
-            select(TravelPhoto)
-            .where(TravelPhoto.map_id == map_id, TravelPhoto.place_id == place_id)
+        rows = session.execute(
+            select(TravelPhoto, TravelVisitRecord, TravelVisit)
+            .join(
+                TravelVisitRecord,
+                TravelVisitRecord.visit_record_id == TravelPhoto.visit_record_id,
+            )
+            .join(TravelVisit, TravelVisit.visit_id == TravelVisitRecord.visit_id)
+            .where(
+                TravelVisit.place_id == place_id,
+                (TravelPhoto.owner_user_id == user.shadow_user_id)
+                | (
+                    (TravelVisitRecord.visibility == "shared")
+                    & (TravelVisitRecord.shared_map_id == map_id)
+                ),
+            )
             .order_by(TravelPhoto.captured_at.desc(), TravelPhoto.created_at.desc())
         ).all()
         return {
             "photos": [
-                _photo_payload(photo, include_private=photo.owner_user_id == user.shadow_user_id)
-                for photo in photos
+                _photo_payload(
+                    photo,
+                    visit,
+                    record,
+                    include_private=photo.owner_user_id == user.shadow_user_id,
+                )
+                for photo, record, visit in rows
             ]
         }
 
@@ -124,7 +142,7 @@ def create_photo_upload(
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
 ) -> dict[str, object]:
     with _session(request) as session, session.begin():
-        _editable_map(session, map_id, user.shadow_user_id)
+        _accessible_map(session, map_id, user.shadow_user_id)
         _linked_place(session, map_id, place_id)
         _visit_for_upload(session, body.visit_id, place_id, user.shadow_user_id)
         try:
@@ -188,7 +206,7 @@ def complete_photo_upload(
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
 ) -> dict[str, object]:
     with _session(request) as session, session.begin():
-        _editable_map(session, map_id, user.shadow_user_id)
+        _accessible_map(session, map_id, user.shadow_user_id)
         intent = session.get(TravelMediaUploadIntent, body.intent_id)
         if (
             intent is None
@@ -199,20 +217,44 @@ def complete_photo_upload(
             raise HTTPException(status_code=404, detail={"code": "media_upload_not_found"})
         if _aware(intent.expires_at) <= datetime.now(UTC) and intent.completed_at is None:
             raise HTTPException(status_code=410, detail={"code": "media_upload_expired"})
+        if intent.completed_media_id:
+            completed_photo = session.scalar(
+                select(TravelPhoto).where(TravelPhoto.media_id == intent.completed_media_id)
+            )
+            if completed_photo is not None:
+                record, visit = _photo_context(session, completed_photo)
+                return _photo_payload(completed_photo, visit, record, include_private=True)
         try:
             media_id = _media(request).complete_upload(intent.media_upload_id)
         except MediaGatewayNotConfigured as exc:
             raise HTTPException(status_code=503, detail={"code": "media_unavailable"}) from exc
         except MediaGatewayError as exc:
             raise HTTPException(status_code=502, detail={"code": "media_request_failed"}) from exc
+        visit = _visit_for_upload(session, intent.visit_id, place_id, user.shadow_user_id)
+        if visit is None:
+            visit = TravelVisit(
+                place_id=place_id,
+                shadow_user_id=user.shadow_user_id,
+                source_map_id=map_id,
+                visited_on=date.today(),
+            )
+            session.add(visit)
+            session.flush()
+            _ensure_visit_share(session, visit.visit_id, map_id)
+            intent.visit_id = visit.visit_id
+        record = session.scalar(
+            select(TravelVisitRecord).where(TravelVisitRecord.visit_id == visit.visit_id)
+        )
+        if record is None:
+            record = TravelVisitRecord(visit_id=visit.visit_id)
+            session.add(record)
+            session.flush()
         photo = session.scalar(select(TravelPhoto).where(TravelPhoto.media_id == media_id))
         if photo is None:
             photo = TravelPhoto(
                 media_id=media_id,
                 owner_user_id=user.shadow_user_id,
-                map_id=map_id,
-                place_id=place_id,
-                visit_id=intent.visit_id,
+                visit_record_id=record.visit_record_id,
                 caption=intent.caption,
                 captured_at=intent.captured_at,
                 longitude=intent.longitude,
@@ -223,7 +265,8 @@ def complete_photo_upload(
             session.add(photo)
             session.flush()
         intent.completed_at = datetime.now(UTC)
-        return _photo_payload(photo, include_private=True)
+        intent.completed_media_id = media_id
+        return _photo_payload(photo, visit, record, include_private=True)
 
 
 @router.patch("/photos/{photo_id}")
@@ -238,7 +281,8 @@ def update_photo(
         if photo is None or photo.owner_user_id != user.shadow_user_id:
             raise HTTPException(status_code=404, detail={"code": "travel_photo_not_found"})
         photo.caption = body.caption.strip()
-        return _photo_payload(photo, include_private=True)
+        record, visit = _photo_context(session, photo)
+        return _photo_payload(photo, visit, record, include_private=True)
 
 
 @router.post("/photos/{photo_id}/access")
@@ -251,7 +295,13 @@ def access_photo(
         photo = session.get(TravelPhoto, photo_id)
         if photo is None:
             raise HTTPException(status_code=404, detail={"code": "travel_photo_not_found"})
-        _accessible_map(session, photo.map_id, user.shadow_user_id)
+        record, visit = _photo_context(session, photo)
+        allowed = photo.owner_user_id == user.shadow_user_id
+        if not allowed and record.visibility == "shared" and record.shared_map_id:
+            _accessible_map(session, record.shared_map_id, user.shadow_user_id)
+            allowed = True
+        if not allowed:
+            raise HTTPException(status_code=404, detail={"code": "travel_photo_not_found"})
         try:
             grant = _media(request).grant_access(photo.media_id)
         except MediaGatewayNotConfigured as exc:
@@ -281,13 +331,20 @@ def delete_photo(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-def _photo_payload(photo: TravelPhoto, *, include_private: bool) -> dict[str, object]:
+def _photo_payload(
+    photo: TravelPhoto,
+    visit: TravelVisit,
+    record: TravelVisitRecord,
+    *,
+    include_private: bool,
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "id": photo.photo_id,
         "media_id": photo.media_id,
-        "map_id": photo.map_id,
-        "place_id": photo.place_id,
-        "visit_id": photo.visit_id,
+        "map_id": record.shared_map_id or visit.source_map_id,
+        "place_id": visit.place_id,
+        "visit_id": visit.visit_id,
+        "visit_record_id": record.visit_record_id,
         "caption": photo.caption,
         "captured_at": photo.captured_at.isoformat() if photo.captured_at else None,
         "location_visibility": photo.location_visibility,
@@ -302,6 +359,15 @@ def _photo_payload(photo: TravelPhoto, *, include_private: bool) -> dict[str, ob
             else None
         )
     return payload
+
+
+def _photo_context(session: Session, photo: TravelPhoto) -> tuple[TravelVisitRecord, TravelVisit]:
+    row = session.execute(
+        select(TravelVisitRecord, TravelVisit)
+        .join(TravelVisit, TravelVisit.visit_id == TravelVisitRecord.visit_id)
+        .where(TravelVisitRecord.visit_record_id == photo.visit_record_id)
+    ).one()
+    return row[0], row[1]
 
 
 def _parse_datetime(value: str) -> datetime:

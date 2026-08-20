@@ -12,7 +12,16 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from shadow_travel import __version__
-from shadow_travel.api import assistant, auth, browser, collaboration, machine, media, travel
+from shadow_travel.api import (
+    advanced,
+    assistant,
+    auth,
+    browser,
+    collaboration,
+    machine,
+    media,
+    travel,
+)
 from shadow_travel.auth.oidc import OIDCClient
 from shadow_travel.auth.store import SQLAuthStore
 from shadow_travel.config import Settings
@@ -136,6 +145,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(browser.router)
     app.include_router(travel.router)
+    app.include_router(advanced.router)
+    app.include_router(advanced.public_router)
     app.include_router(collaboration.router)
     app.include_router(media.router)
     app.include_router(assistant.router)

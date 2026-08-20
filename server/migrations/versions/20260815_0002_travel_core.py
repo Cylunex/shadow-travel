@@ -1,7 +1,10 @@
-"""Create the persistent travel-map core.
+"""Create the finalized persistent travel domain.
 
 Revision ID: 20260815_0002
 Revises: 20260815_0001
+
+The project has no production data baseline yet, so this revision intentionally
+defines the final P0 model instead of carrying the discarded prototype schema.
 """
 
 from collections.abc import Sequence
@@ -28,11 +31,20 @@ def upgrade() -> None:
         sa.Column("accent_soft", sa.String(16), nullable=False),
         sa.Column("emoji", sa.String(8), nullable=False),
         sa.Column("period", sa.String(120)),
+        sa.Column("progress_enabled", sa.Boolean(), nullable=False),
+        sa.Column("progress_mode", sa.String(16), nullable=False),
+        sa.Column("progress_target", sa.Integer()),
+        sa.Column("progress_start_date", sa.Date()),
+        sa.Column("progress_end_date", sa.Date()),
         sa.Column("route_enabled", sa.Boolean(), nullable=False),
+        sa.Column("source_map_id", sa.String(36)),
         sa.Column("archived", sa.Boolean(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(["source_map_id"], ["travel_maps.map_id"], ondelete="SET NULL"),
     )
     op.create_index("ix_travel_maps_owner_updated", "travel_maps", ["owner_user_id", "updated_at"])
     op.create_table(
@@ -42,7 +54,9 @@ def upgrade() -> None:
         sa.Column("role", sa.String(16), nullable=False),
         sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
     )
     op.create_table(
         "travel_places",
@@ -54,27 +68,33 @@ def upgrade() -> None:
         sa.Column("district", sa.String(100), nullable=False),
         sa.Column("city", sa.String(100), nullable=False),
         sa.Column("country_code", sa.String(2), nullable=False),
-        sa.Column("category", sa.String(100), nullable=False),
-        sa.Column("tags", sa.JSON(), nullable=False),
-        sa.Column("note", sa.Text(), nullable=False),
         sa.Column("longitude", sa.Float(), nullable=False),
         sa.Column("latitude", sa.Float(), nullable=False),
         sa.Column("coordinate_reference", sa.String(16), nullable=False),
         sa.Column("provider", sa.String(24), nullable=False),
         sa.Column("provider_place_id", sa.String(255)),
-        sa.Column("recommended", sa.String(300)),
-        sa.Column("price", sa.String(80)),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
-        sa.UniqueConstraint("owner_user_id", "provider", "provider_place_id", name="uq_travel_place_provider"),
+        sa.ForeignKeyConstraint(
+            ["owner_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
+        sa.UniqueConstraint("provider", "provider_place_id", name="uq_travel_place_provider"),
     )
-    op.create_index("ix_travel_places_owner_updated", "travel_places", ["owner_user_id", "updated_at"])
+    op.create_index(
+        "ix_travel_places_owner_updated", "travel_places", ["owner_user_id", "updated_at"]
+    )
     op.create_table(
         "travel_map_places",
         sa.Column("map_id", sa.String(36), primary_key=True),
         sa.Column("place_id", sa.String(36), primary_key=True),
+        sa.Column("display_name", sa.String(200)),
+        sa.Column("category", sa.String(100), nullable=False),
+        sa.Column("tags", sa.JSON(), nullable=False),
+        sa.Column("shared_note", sa.Text(), nullable=False),
+        sa.Column("custom_values", sa.JSON(), nullable=False),
+        sa.Column("counts_toward_progress", sa.Boolean(), nullable=False),
         sa.Column("position", sa.Integer(), nullable=False),
+        sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("added_by", sa.String(36), nullable=False),
         sa.Column("added_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
@@ -84,30 +104,74 @@ def upgrade() -> None:
     )
     op.create_table(
         "travel_place_preferences",
+        sa.Column("map_id", sa.String(36), primary_key=True),
         sa.Column("place_id", sa.String(36), primary_key=True),
         sa.Column("shadow_user_id", sa.String(36), primary_key=True),
         sa.Column("preference", sa.String(16), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["place_id"], ["travel_places.place_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["map_id", "place_id"],
+            ["travel_map_places.map_id", "travel_map_places.place_id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
     )
     op.create_table(
         "travel_visits",
         sa.Column("visit_id", sa.String(36), primary_key=True),
         sa.Column("place_id", sa.String(36), nullable=False),
         sa.Column("shadow_user_id", sa.String(36), nullable=False),
-        sa.Column("map_id", sa.String(36)),
+        sa.Column("source_map_id", sa.String(36)),
         sa.Column("visited_on", sa.Date(), nullable=False),
-        sa.Column("note", sa.Text(), nullable=False),
-        sa.Column("rating", sa.Integer()),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["place_id"], ["travel_places.place_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(
+            ["shadow_user_id"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(["source_map_id"], ["travel_maps.map_id"], ondelete="SET NULL"),
     )
     op.create_index("ix_travel_visits_user_date", "travel_visits", ["shadow_user_id", "visited_on"])
     op.create_index("ix_travel_visits_place_date", "travel_visits", ["place_id", "visited_on"])
+    op.create_table(
+        "travel_visit_map_shares",
+        sa.Column("visit_id", sa.String(36), primary_key=True),
+        sa.Column("map_id", sa.String(36), primary_key=True),
+        sa.Column("shared_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["visit_id"], ["travel_visits.visit_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
+    )
+    op.create_table(
+        "travel_visit_records",
+        sa.Column("visit_record_id", sa.String(36), primary_key=True),
+        sa.Column("visit_id", sa.String(36), nullable=False, unique=True),
+        sa.Column("note", sa.Text(), nullable=False),
+        sa.Column("rating", sa.Integer()),
+        sa.Column("visibility", sa.String(16), nullable=False),
+        sa.Column("shared_map_id", sa.String(36)),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["visit_id"], ["travel_visits.visit_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["shared_map_id"], ["travel_maps.map_id"], ondelete="SET NULL"),
+    )
+    op.create_table(
+        "travel_map_field_definitions",
+        sa.Column("field_id", sa.String(36), primary_key=True),
+        sa.Column("map_id", sa.String(36), nullable=False),
+        sa.Column("field_key", sa.String(64), nullable=False),
+        sa.Column("label", sa.String(100), nullable=False),
+        sa.Column("field_type", sa.String(16), nullable=False),
+        sa.Column("options", sa.JSON(), nullable=False),
+        sa.Column("required", sa.Boolean(), nullable=False),
+        sa.Column("position", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
+        sa.UniqueConstraint("map_id", "field_key", name="uq_travel_map_field_key"),
+        sa.UniqueConstraint("map_id", "position", name="uq_travel_map_field_position"),
+    )
     op.create_table(
         "travel_routes",
         sa.Column("route_id", sa.String(36), primary_key=True),
@@ -121,7 +185,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["map_id"], ["travel_maps.map_id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["created_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["created_by"], ["shadow_users.shadow_user_id"], ondelete="CASCADE"
+        ),
     )
     op.create_index("ix_travel_routes_map_updated", "travel_routes", ["map_id", "updated_at"])
     op.create_table(
@@ -139,6 +205,9 @@ def downgrade() -> None:
     op.drop_table("travel_route_stops")
     op.drop_index("ix_travel_routes_map_updated", table_name="travel_routes")
     op.drop_table("travel_routes")
+    op.drop_table("travel_map_field_definitions")
+    op.drop_table("travel_visit_records")
+    op.drop_table("travel_visit_map_shares")
     op.drop_index("ix_travel_visits_place_date", table_name="travel_visits")
     op.drop_index("ix_travel_visits_user_date", table_name="travel_visits")
     op.drop_table("travel_visits")
