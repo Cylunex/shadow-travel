@@ -33,9 +33,6 @@ export function AMapSurface({
   const onMapClickRef = useRef(onMapClick);
   const [AMapApi, setAMapApi] = useState<typeof AMap>();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [theme, setTheme] = useState<"dark" | "light">(
-    document.documentElement.dataset.theme === "light" ? "light" : "dark"
-  );
   const selectedPlace = places.find((place) => place.id === selectedId);
   onMapClickRef.current = onMapClick;
 
@@ -48,7 +45,7 @@ export function AMapSurface({
         viewMode: "2D",
         zoom: compact ? 13 : 11,
         center: initialCenter(places),
-        mapStyle: document.documentElement.dataset.theme === "light" ? "amap://styles/normal" : "amap://styles/darkblue",
+        mapStyle: "amap://styles/normal",
         showLabel: true
       });
       mapRef.current = map;
@@ -71,18 +68,6 @@ export function AMapSurface({
       mapRef.current = null;
     };
   }, [compact]);
-
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    mapRef.current?.setMapStyle(theme === "light" ? "amap://styles/normal" : "amap://styles/darkblue");
-  }, [theme]);
 
   useEffect(() => {
     if (!containerRef.current) return;
