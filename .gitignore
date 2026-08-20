@@ -46,3 +46,8 @@ docs/operations-private/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Real deployment and operations material is maintained outside the repository.
+deploy/
+ops/
+operations/
