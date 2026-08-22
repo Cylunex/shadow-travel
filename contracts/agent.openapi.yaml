@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: Shadow Travel Agent API
+  version: 0.1.0
+servers:
+  - url: https://travel.example.com
+paths:
+  /api/machine/v1/agent/maps:
+    get:
+      operationId: list_agent_maps
+      summary: List maps explicitly granted to the current Agent
+      responses:
+        "200":
+          description: Authorized maps
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentMapList"
+  /api/machine/v1/agent/maps/{map_id}:
+    get:
+      operationId: get_agent_map
+      summary: Get minimal planning context for one granted map
+      parameters:
+        - $ref: "#/components/parameters/MapId"
+      responses:
+        "200":
+          description: Minimal map context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentMapContext"
+  /api/machine/v1/agent/maps/{map_id}/drafts:
+    post:
+      operationId: create_agent_draft
+      summary: Create a pending draft for one granted map
+      parameters:
+        - $ref: "#/components/parameters/MapId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentDraftCreate"
+      responses:
+        "201":
+          description: Pending draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentDraftCreated"
+components:
+  parameters:
+    MapId:
+      name: map_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+  schemas:
+    AgentMapSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, city, country_code, updated_at, can_create_drafts]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        city: { type: string }
+        country_code: { type: string }
+        updated_at: { type: string, format: date-time }
+        can_create_drafts: { type: boolean }
+    AgentMapList:
+      type: object
+      additionalProperties: false
+      required: [maps]
+      properties:
+        maps:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentMapSummary"
+    AgentMap:
+      type: object
+      additionalProperties: false
+      required: [id, title, subtitle, city, country_code, period]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        subtitle: { type: string }
+        city: { type: string }
+        country_code: { type: string }
+        period:
+          anyOf:
+            - { type: string }
+            - { type: "null" }
+    AgentPlace:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - address
+        - district
+        - city
+        - category
+        - tags
+        - shared_note
+        - custom_values
+        - version
+        - longitude
+        - latitude
+        - coordinate_reference
+      properties:
+        id: { type: string }
+        name: { type: string }
+        address: { type: string }
+        district: { type: string }
+        city: { type: string }
+        category: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        shared_note: { type: string }
+        custom_values:
+          type: object
+          additionalProperties: true
+        version: { type: integer }
+        longitude: { type: number }
+        latitude: { type: number }
+        coordinate_reference: { type: string }
+    AgentRoute:
+      type: object
+      additionalProperties: false
+      required: [id, title, mode, stop_ids]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        mode: { type: string }
+        stop_ids:
+          type: array
+          items: { type: string }
+    AgentMapContext:
+      type: object
+      additionalProperties: false
+      required: [map, places, routes]
+      properties:
+        map:
+          $ref: "#/components/schemas/AgentMap"
+        places:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentPlace"
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentRoute"
+    AgentDraftCreate:
+      type: object
+      additionalProperties: false
+      required: [draft_type, title, payload]
+      properties:
+        draft_type:
+          enum: [route, place-list, map-notes]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+        payload:
+          type: object
+          additionalProperties: true
+    AgentDraftCreated:
+      type: object
+      additionalProperties: false
+      required: [id, map_id, status, direct_domain_write]
+      properties:
+        id: { type: string }
+        map_id: { type: string }
+        status: { const: pending }
+        direct_domain_write: { const: false }

@@ -1,0 +1,8 @@
+version: 1
+confirmations:
+  - capability: travel.maps.read
+    mode: none
+    receipt_required: false
+  - capability: travel.drafts.create
+    mode: notify
+    receipt_required: false

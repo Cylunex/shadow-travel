@@ -1,0 +1,6 @@
+version: 1
+events:
+  - id: travel.agent-draft.created
+    producer: travel
+    data_classification: personal
+    payload: metadata-only

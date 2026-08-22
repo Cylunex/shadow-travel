@@ -1,0 +1,10 @@
+version: 1
+resources:
+  - type: travel-map
+    uri_template: shadow://travel/maps/{map_id}
+    owner: travel
+    resource_grant_required: true
+  - type: travel-agent-draft
+    uri_template: shadow://travel/drafts/{draft_id}
+    owner: travel
+    resource_grant_required: true

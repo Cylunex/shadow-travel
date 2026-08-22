@@ -1,0 +1,10 @@
+version: 1
+permissions:
+  - capability: travel.maps.read
+    audience: travel
+    scopes: [travel.maps.read]
+    resource_grant: travel-map.read
+  - capability: travel.drafts.create
+    audience: travel
+    scopes: [travel.drafts.create]
+    resource_grant: travel-map.drafts
