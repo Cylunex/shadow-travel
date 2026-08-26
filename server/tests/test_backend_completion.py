@@ -11,7 +11,7 @@ class FakeMedia:
     def create_upload(self, **_: object) -> dict[str, object]:
         return {
             "upload_id": "upload-one",
-            "expires_at": "2026-08-21T00:00:00+00:00",
+            "expires_at": "2099-08-21T00:00:00+00:00",
             "target": {"url": "https://upload.example.com/one", "method": "PUT"},
         }
 

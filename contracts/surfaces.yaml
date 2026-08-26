@@ -1,0 +1,35 @@
+version: 1
+presentation:
+  short_id: travel
+  title: Travel
+  caption: 地点、到访、主题地图与旅行记忆
+  icon: travel
+  color: "#38BDF8"
+  order: 30
+surfaces:
+  - id: maps
+    type: summary
+    capability: travel.maps.read
+    operation_id: list_agent_maps
+    display:
+      collection_pointer: /maps
+  - id: capture
+    type: capture
+    capability: travel.drafts.create
+    operation_id: create_nexus_travel_review
+    risk_level: L2
+    intent_prefixes: [travel.route, travel.place-list, travel.map-notes]
+  - id: review
+    type: review
+    capability: travel.drafts.review
+    risk_level: L2
+    intent_prefixes: [travel.route, travel.place-list, travel.map-notes]
+  - id: app
+    type: app-link
+review:
+  protocol: shadow.review.v1
+  mode: commit
+  list_operation_id: list_nexus_travel_reviews
+  create_operation_id: create_nexus_travel_review
+  commit_operation_id: commit_nexus_travel_review
+  reject_operation_id: reject_nexus_travel_review

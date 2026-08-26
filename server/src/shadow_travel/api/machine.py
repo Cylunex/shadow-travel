@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from shadow_travel.infrastructure.models import (
     AgentIdempotencyKey,
     AuditEvent,
+    ShadowUser,
     TravelAgentDraft,
     TravelAgentMapGrant,
     TravelMap,
@@ -44,6 +45,14 @@ class AgentDraftCreate(BaseModel):
         if len(_canonical_json(self.payload)) > 32_768:
             raise ValueError("draft payload is too large")
         return self
+
+
+class NexusReviewCreate(BaseModel):
+    intent: str = Field(pattern=r"^travel\.[A-Za-z0-9.-]{1,80}$")
+    summary: str = Field(min_length=1, max_length=500)
+    fields: dict[str, object]
+    source_text: str = Field(default="", max_length=4000)
+    source_refs: list[str] = Field(default_factory=list, max_length=16)
 
 
 def _authorization_error(code: str, status_code: int) -> HTTPException:
@@ -295,6 +304,226 @@ def create_agent_draft(
             )
         )
         return response
+
+
+@router.post(
+    "/agent/nexus/reviews",
+    status_code=status.HTTP_201_CREATED,
+    operation_id="create_nexus_travel_review",
+)
+def create_nexus_travel_review(
+    body: NexusReviewCreate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object]:
+    fields = body.fields
+    map_id = fields.get("mapId")
+    draft_type = fields.get("draftType") or "map-notes"
+    raw_payload = fields.get("payload")
+    if isinstance(raw_payload, str):
+        try:
+            raw_payload = json.loads(raw_payload)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=422, detail={"code": "invalid_nexus_review"}
+            ) from exc
+    if not isinstance(map_id, str) or not isinstance(raw_payload, dict):
+        raise HTTPException(status_code=422, detail={"code": "invalid_nexus_review"})
+    created = create_agent_draft(
+        map_id,
+        AgentDraftCreate(
+            draft_type=str(draft_type),
+            title=str(fields.get("title") or body.summary),
+            payload=raw_payload,
+        ),
+        request,
+        authorization,
+        idempotency_key,
+    )
+    with request.app.state.database.session_factory() as session:
+        draft = session.get(TravelAgentDraft, str(created["id"]))
+        if draft is None:
+            raise HTTPException(status_code=500, detail={"code": "nexus_review_missing"})
+        return _travel_review_envelope(draft, request.state.request_id)
+
+
+@router.get("/agent/nexus/reviews", operation_id="list_nexus_travel_reviews")
+def list_nexus_travel_reviews(
+    request: Request,
+    limit: int = 200,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    identity = require_agent(request, authorization, scope="travel.drafts.review")
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail={"code": "invalid_limit"})
+    with request.app.state.database.session_factory() as session:
+        rows = list(
+            session.scalars(
+                select(TravelAgentDraft)
+                .join(
+                    TravelAgentMapGrant,
+                    (TravelAgentMapGrant.map_id == TravelAgentDraft.map_id)
+                    & (TravelAgentMapGrant.agent_id == TravelAgentDraft.agent_id),
+                )
+                .where(
+                    TravelAgentDraft.agent_id == identity.agent_id,
+                    TravelAgentDraft.status == "pending",
+                    TravelAgentMapGrant.allow_drafts.is_(True),
+                )
+                .order_by(TravelAgentDraft.created_at, TravelAgentDraft.draft_id)
+                .limit(limit + 1)
+            )
+        )
+        return {
+            "protocol": "shadow.review.v1",
+            "items": [
+                _travel_review_envelope(draft, request.state.request_id)
+                for draft in rows[:limit]
+            ],
+            "truncated": len(rows) > limit,
+            "trace_id": request.state.request_id,
+        }
+
+
+@router.post(
+    "/agent/nexus/reviews/{review_id}/commit",
+    operation_id="commit_nexus_travel_review",
+)
+def commit_nexus_travel_review(
+    review_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    identity = require_agent(request, authorization, scope="travel.drafts.review")
+    draft, user = _nexus_review_owner(request, review_id, identity.agent_id)
+    from shadow_travel.api.collaboration import apply_agent_draft
+
+    result = apply_agent_draft(review_id, request, user)
+    draft_view = result["draft"]
+    receipt = _travel_receipt(draft_view)
+    return _travel_review_from_view(
+        draft_view,
+        request.state.request_id,
+        receipt=receipt,
+        replayed=draft.status == "applied",
+    )
+
+
+@router.post(
+    "/agent/nexus/reviews/{review_id}/reject",
+    operation_id="reject_nexus_travel_review",
+)
+def reject_nexus_travel_review(
+    review_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    identity = require_agent(request, authorization, scope="travel.drafts.review")
+    draft, user = _nexus_review_owner(request, review_id, identity.agent_id)
+    if draft.status == "rejected":
+        return _travel_review_envelope(
+            draft, request.state.request_id, replayed=True
+        )
+    from shadow_travel.api.collaboration import AgentDraftReview, review_agent_draft
+
+    result = review_agent_draft(
+        review_id, AgentDraftReview(status="rejected"), request, user
+    )
+    return _travel_review_from_view(result, request.state.request_id)
+
+
+def _nexus_review_owner(
+    request: Request, review_id: str, agent_id: str
+) -> tuple[TravelAgentDraft, object]:
+    from shadow_travel.auth.store import AuthenticatedUser
+
+    with request.app.state.database.session_factory() as session:
+        row = session.execute(
+            select(TravelAgentDraft, TravelAgentMapGrant, ShadowUser)
+            .join(
+                TravelAgentMapGrant,
+                (TravelAgentMapGrant.map_id == TravelAgentDraft.map_id)
+                & (TravelAgentMapGrant.agent_id == TravelAgentDraft.agent_id),
+            )
+            .join(ShadowUser, ShadowUser.shadow_user_id == TravelAgentMapGrant.granted_by)
+            .where(
+                TravelAgentDraft.draft_id == review_id,
+                TravelAgentDraft.agent_id == agent_id,
+                TravelAgentMapGrant.allow_drafts.is_(True),
+            )
+        ).one_or_none()
+        if row is None:
+            raise HTTPException(
+                status_code=404, detail={"code": "travel_agent_draft_not_found"}
+            )
+        draft, _, owner = row
+        return draft, AuthenticatedUser(
+            shadow_user_id=owner.shadow_user_id,
+            issuer=owner.issuer,
+            subject=owner.subject,
+            username=owner.username,
+            display_name=owner.display_name,
+            email=owner.email,
+        )
+
+
+def _travel_review_envelope(
+    draft: TravelAgentDraft,
+    trace_id: str,
+    *,
+    replayed: bool = False,
+    receipt: str | None = None,
+) -> dict[str, object]:
+    from shadow_travel.api.collaboration import _agent_draft_payload
+
+    return _travel_review_from_view(
+        _agent_draft_payload(draft),
+        trace_id,
+        replayed=replayed,
+        receipt=receipt,
+    )
+
+
+def _travel_review_from_view(
+    draft: dict[str, object],
+    trace_id: str,
+    *,
+    replayed: bool = False,
+    receipt: str | None = None,
+) -> dict[str, object]:
+    state = {"pending": "pending", "applied": "committed", "rejected": "rejected"}.get(
+        str(draft["status"]), str(draft["status"])
+    )
+    return {
+        "protocol": "shadow.review.v1",
+        "review_id": str(draft["id"]),
+        "reference": f"shadow://travel/drafts/{draft['id']}",
+        "revision": 1,
+        "domain": "travel",
+        "intent": f"travel.{draft['draft_type']}",
+        "summary": str(draft["title"]),
+        "fields": {
+            "mapId": draft["map_id"],
+            "draftType": draft["draft_type"],
+            "title": draft["title"],
+            "payload": draft["payload"],
+        },
+        "risk_level": "L2",
+        "state": state,
+        "created_at": str(draft["created_at"]),
+        "source_refs": [],
+        "trace_id": trace_id,
+        "receipt": receipt,
+        "replayed": replayed,
+    }
+
+
+def _travel_receipt(draft: dict[str, object]) -> str:
+    applied = draft.get("applied_resource")
+    if isinstance(applied, dict) and applied.get("type") and applied.get("id"):
+        return f"shadow://travel/{applied['type']}/{applied['id']}"
+    return f"shadow://travel/drafts/{draft['id']}/applied"
 
 
 @router.get("/sync/ping")

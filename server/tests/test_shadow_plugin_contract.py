@@ -12,6 +12,8 @@ from shadow_travel.infrastructure.models import (
     ShadowUser,
     TravelAgentMapGrant,
     TravelMap,
+    TravelMapMember,
+    TravelPlace,
 )
 from shadow_travel.main import create_app
 
@@ -59,7 +61,7 @@ agents:
   travel-helper:
     owner_app: travel
     audiences: [travel]
-    scopes: [travel.maps.read, travel.drafts.create]
+    scopes: [travel.maps.read, travel.drafts.create, travel.drafts.review]
     credential_hash_files:
       - agents/travel-helper/current-token.sha256
 """,
@@ -87,6 +89,7 @@ def test_shadow_plugin_contract_matches_travel_machine_routes(settings_factory) 
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "travel.maps.read",
         "travel.drafts.create",
+        "travel.drafts.review",
     }
 
 
@@ -128,6 +131,13 @@ def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
                 allow_drafts=True,
             )
         )
+        session.add(
+            TravelMapMember(
+                map_id="map-example",
+                shadow_user_id="owner-example",
+                role="owner",
+            )
+        )
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
@@ -159,3 +169,107 @@ def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
     assert created.json() == repeated.json()
     assert created.json()["status"] == "pending"
     assert created.json()["direct_domain_write"] is False
+
+
+def test_standard_nexus_review_protocol_creates_lists_and_commits(
+    settings_factory, tmp_path
+) -> None:
+    token = "travel-review-test-token-that-is-long-enough"
+    registry, secrets_dir = _agent_registry(tmp_path, token)
+    app = create_app(
+        settings_factory(agent_registry_path=registry, agent_secrets_dir=secrets_dir)
+    )
+    Base.metadata.create_all(app.state.database.engine)
+    with app.state.database.session_factory() as session, session.begin():
+        session.add(
+            ShadowUser(
+                shadow_user_id="owner-example",
+                issuer="https://auth.example.com",
+                subject="owner-example",
+                username="owner",
+                display_name="Owner",
+                email="owner@example.com",
+            )
+        )
+        session.add(
+            TravelMap(
+                map_id="map-example",
+                owner_user_id="owner-example",
+                title="Example Map",
+                city="Example City",
+                country_code="CN",
+            )
+        )
+        session.add(
+            TravelMapMember(
+                map_id="map-example",
+                shadow_user_id="owner-example",
+                role="owner",
+            )
+        )
+        session.add(
+            TravelAgentMapGrant(
+                map_id="map-example",
+                agent_id="travel-helper",
+                granted_by="owner-example",
+                allow_read=True,
+                allow_drafts=True,
+            )
+        )
+        session.add(
+            TravelPlace(
+                place_id="place-example",
+                owner_user_id="owner-example",
+                name="测试地点",
+                short_name="测试地点",
+                city="Example City",
+                country_code="CN",
+                longitude=121.5,
+                latitude=31.2,
+                coordinate_reference="GCJ02",
+                provider="manual",
+                provider_place_id="verified-example-place",
+            )
+        )
+
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/machine/v1/agent/nexus/reviews",
+            headers={**headers, "Idempotency-Key": "nexus-travel-review"},
+            json={
+                "intent": "travel.place-list",
+                "summary": "补充旅行地点",
+                "fields": {
+                    "mapId": "map-example",
+                    "draftType": "place-list",
+                    "title": "补充旅行地点",
+                    "payload": {
+                        "points": [
+                            {
+                                "place_id": "place-example",
+                            }
+                        ]
+                    },
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        review = created.json()
+        assert review["protocol"] == "shadow.review.v1"
+        assert review["domain"] == "travel"
+        assert review["state"] == "pending"
+
+        listed = client.get("/api/machine/v1/agent/nexus/reviews", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert [item["review_id"] for item in listed.json()["items"]] == [
+            review["review_id"]
+        ]
+
+        committed = client.post(
+            f"/api/machine/v1/agent/nexus/reviews/{review['review_id']}/commit",
+            headers=headers,
+        )
+        assert committed.status_code == 200, committed.text
+        assert committed.json()["state"] == "committed"
+        assert committed.json()["receipt"].startswith("shadow://travel/")

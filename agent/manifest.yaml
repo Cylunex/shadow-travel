@@ -62,10 +62,66 @@ capabilities:
         timeout_ms: 15000
         concurrency_safe: false
         retry_policy: idempotent
+      - name: travel.nexus.review.create
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: create_nexus_travel_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 16384
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
     effect: draft
     data_classification: personal
     risk_level: L1
     confirmation: notify
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true
+  - id: travel.drafts.review
+    summary: 由 Nexus Host 汇总、确认或退回同一 Agent 创建的旅行草稿
+    audience: travel
+    scopes: [travel.drafts.review]
+    tools:
+      - name: travel.nexus.review.list
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: list_nexus_travel_reviews
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 262144
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: travel.nexus.review.commit
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: commit_nexus_travel_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 16384
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: travel.nexus.review.reject
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: reject_nexus_travel_review
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 16384
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: write
+    data_classification: personal
+    risk_level: L2
+    confirmation: policy
     reversible: true
     resource_grant_required: true
     idempotency_required: true
