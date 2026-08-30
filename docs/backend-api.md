@@ -97,6 +97,19 @@ Place 只保存名称、地址、坐标和 Provider 来源等现实事实；同�
 - `GET /api/machine/v1/agent/maps`：只返回地图所有者显式授权的地图。
 - `GET /api/machine/v1/agent/maps/{map_id}`：返回最小化地图、地点与路线上下文，不含个人意愿、到访和照片地址。
 - `POST /api/machine/v1/agent/maps/{map_id}/drafts`：提交待用户确认的草案，必须提供 `Idempotency-Key`。
+- `GET /api/machine/v1/agent/summary`：返回授权资源的稳定计数、观测时间和关联 ID，不返回
+  地点、到访内容或用户标识。
+
+## Trip、离线写入与可移植恢复
+
+- `GET/POST /api/browser/v1/trips`：列出或以稳定 `client_record_id` 创建 Trip；创建支持
+  `Idempotency-Key` 重放。
+- `PATCH /api/browser/v1/trips/{trip_id}`：以 `expected_version` 做可见冲突控制。
+- `POST /api/browser/v1/places/{place_id}/visits`：支持 `client_record_id`、`trip_id`、
+  `Idempotency-Key` 与 `X-Correlation-Id`；同键异载荷返回 409。
+- `PATCH /api/browser/v1/visits/{visit_id}`：支持 `expected_version` 和幂等更新重放。
+- `GET /api/browser/v1/trips/{trip_id}/bundle`：导出带分区哈希的 Trip Bundle v1，只含媒体引用。
+- `POST /api/browser/v1/trip-bundles/verify`：无写入验证完整性、引用、隐私和隔离重建。
 
 地图所有者通过以下浏览器接口控制 Agent 授权：
 

@@ -153,6 +153,36 @@ class TravelMap(Base):
     )
 
 
+class TravelTrip(Base):
+    __tablename__ = "travel_trips"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "client_record_id", name="uq_travel_trip_owner_client_record"
+        ),
+        Index("ix_travel_trips_owner_updated", "owner_user_id", "updated_at"),
+    )
+
+    trip_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), nullable=False
+    )
+    source_map_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_maps.map_id", ondelete="SET NULL")
+    )
+    client_record_id: Mapped[str] = mapped_column(String(128), nullable=False, default=uuid_string)
+    client_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    start_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="planned")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class TravelMapMember(Base):
     __tablename__ = "travel_map_members"
 
@@ -240,6 +270,10 @@ class TravelMapPlace(Base):
     shared_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     custom_values: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
     counts_toward_progress: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    public_location_precision: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="approximate"
+    )
+    privacy_zone: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     added_by: Mapped[str] = mapped_column(
@@ -275,6 +309,9 @@ class TravelVisit(Base):
     __table_args__ = (
         Index("ix_travel_visits_user_date", "shadow_user_id", "visited_on"),
         Index("ix_travel_visits_place_date", "place_id", "visited_on"),
+        UniqueConstraint(
+            "shadow_user_id", "client_record_id", name="uq_travel_visit_user_client_record"
+        ),
     )
 
     visit_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
@@ -287,11 +324,37 @@ class TravelVisit(Base):
     source_map_id: Mapped[str | None] = mapped_column(
         ForeignKey("travel_maps.map_id", ondelete="SET NULL")
     )
+    trip_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="SET NULL")
+    )
+    client_record_id: Mapped[str] = mapped_column(String(128), nullable=False, default=uuid_string)
+    client_payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     visited_on: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
+
+
+class TravelClientMutation(Base):
+    __tablename__ = "travel_client_mutations"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "operation", "idempotency_key", name="uq_travel_client_mutation"
+        ),
+        Index("ix_travel_client_mutations_owner_created", "owner_user_id", "created_at"),
+    )
+
+    mutation_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), nullable=False
+    )
+    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_json: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class TravelVisitMapShare(Base):

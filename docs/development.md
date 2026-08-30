@@ -107,4 +107,8 @@ VITE_BASE_PATH=travel npm run build
 - `GET /api/machine/v1/agent/capabilities`：只接受 Shadow Agent Bearer。
 - `GET /api/machine/v1/sync/ping`：只接受独立后台同步 Bearer。
 
+恢复与 Platform 证据流程见 [offline-portability.md](offline-portability.md)。任何
+`restore-tested` 证据都必须指向隔离恢复实例，并同时通过 Bundle、`healthz` 与 `readyz`；不要对
+生产数据库直接运行恢复验证。
+
 外部能力的生产地址、凭据文件位置、反向代理和发布命令不属于本地开发文档。

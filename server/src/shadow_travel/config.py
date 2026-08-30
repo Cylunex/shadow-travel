@@ -67,6 +67,9 @@ class Settings:
     agent_registry_path: str | None = None
     agent_secrets_dir: str | None = None
     sync_token_hash_file: str | None = None
+    location_history_mode: Literal["disabled", "local", "self-hosted"] = "disabled"
+    location_history_explicitly_enabled: bool = False
+    location_history_self_hosted_url: str | None = None
 
     @classmethod
     def from_env(cls) -> Self:
@@ -96,6 +99,11 @@ class Settings:
             "agent_registry_path": _optional("AGENT_REGISTRY_PATH"),
             "agent_secrets_dir": _optional("AGENT_SECRETS_DIR"),
             "sync_token_hash_file": _optional("SYNC_TOKEN_HASH_FILE"),
+            "location_history_mode": _env("LOCATION_HISTORY_MODE", "disabled"),
+            "location_history_explicitly_enabled": _boolean(
+                "LOCATION_HISTORY_EXPLICITLY_ENABLED", False
+            ),
+            "location_history_self_hosted_url": _optional("LOCATION_HISTORY_SELF_HOSTED_URL"),
         }
         allowed = {item.name for item in fields(cls)}
         return cls(**{key: value for key, value in values.items() if key in allowed})
@@ -151,6 +159,28 @@ class Settings:
             errors.append("Agent registry and secrets directory must be configured together")
         if self.session_ttl_seconds <= 0 or self.oidc_flow_ttl_seconds <= 0:
             errors.append("session and OIDC flow TTLs must be positive")
+        if self.location_history_mode not in {"disabled", "local", "self-hosted"}:
+            errors.append("location history mode must be disabled, local or self-hosted")
+        if self.location_history_explicitly_enabled == (
+            self.location_history_mode == "disabled"
+        ):
+            errors.append(
+                "location history requires explicit enablement and a local or self-hosted mode"
+            )
+        if self.location_history_mode == "self-hosted":
+            location_origin = urlsplit(self.location_history_self_hosted_url or "")
+            allowed_location_schemes = (
+                {"https"} if self.environment == "production" else {"http", "https"}
+            )
+            if (
+                location_origin.scheme not in allowed_location_schemes
+                or not location_origin.netloc
+                or location_origin.username is not None
+                or location_origin.password is not None
+            ):
+                errors.append("self-hosted location history requires a safe HTTP(S) URL")
+        elif self.location_history_self_hosted_url:
+            errors.append("location history URL is only valid in self-hosted mode")
         if not 0 <= self.oidc_clock_skew_seconds <= 300:
             errors.append("OIDC clock skew must be between 0 and 300 seconds")
         if self.environment == "production":

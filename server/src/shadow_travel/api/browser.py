@@ -33,13 +33,16 @@ def me(user: Annotated[AuthenticatedUser, Depends(current_browser_user)]) -> dic
 def capabilities(
     request: Request,
     _user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
-) -> dict[str, bool]:
+) -> dict[str, object]:
     """Expose safe feature flags without leaking service locations or credentials."""
     settings = request.app.state.settings
     return {
         "media": bool(settings.media_base_url and settings.media_service_token_file),
         "llm": bool(settings.llm_registry_path and settings.llm_secrets_dir),
         "international_maps": bool(settings.google_maps_server_key_file),
+        "location_history": settings.location_history_explicitly_enabled,
+        "location_history_mode": settings.location_history_mode,
+        "continuous_tracking_default": False,
     }
 
 

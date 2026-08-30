@@ -93,6 +93,8 @@ class MapPointPatch(BaseModel):
     note: str | None = Field(default=None, max_length=10_000)
     custom_values: dict[str, object] | None = None
     counts_toward_progress: bool | None = None
+    public_location_precision: Literal["hidden", "approximate", "exact"] | None = None
+    privacy_zone: bool | None = None
 
 
 class BatchMapPointUpdate(BaseModel):
@@ -126,6 +128,8 @@ class ImportPoint(BaseModel):
     note: str = Field(default="", max_length=10_000)
     custom_values: dict[str, object] = Field(default_factory=dict)
     counts_toward_progress: bool = True
+    public_location_precision: Literal["hidden", "approximate", "exact"] = "approximate"
+    privacy_zone: bool = False
 
 
 class ImportApply(BaseModel):
@@ -680,6 +684,10 @@ def batch_update_points(
                 )
             if operation.counts_toward_progress is not None:
                 link.counts_toward_progress = operation.counts_toward_progress
+            if operation.public_location_precision is not None:
+                link.public_location_precision = operation.public_location_precision
+            if operation.privacy_zone is not None:
+                link.privacy_zone = operation.privacy_zone
             link.version += 1
             links.append(link)
         _audit(
@@ -741,6 +749,8 @@ def copy_map(
                     shared_note=link.shared_note,
                     custom_values=dict(link.custom_values),
                     counts_toward_progress=link.counts_toward_progress,
+                    public_location_precision=link.public_location_precision,
+                    privacy_zone=link.privacy_zone,
                     position=link.position,
                     added_by=user.shadow_user_id,
                 )
@@ -885,6 +895,8 @@ def apply_import(
                         shared_note=item.note.strip(),
                         custom_values=custom_values,
                         counts_toward_progress=item.counts_toward_progress,
+                        public_location_precision=item.public_location_precision,
+                        privacy_zone=item.privacy_zone,
                         position=position,
                         added_by=user.shadow_user_id,
                     )
@@ -1079,6 +1091,14 @@ def revoke_share_link(
         if item is None or item.map_id != map_id:
             raise HTTPException(status_code=404, detail={"code": "share_link_not_found"})
         item.revoked_at = datetime.now(UTC)
+        _audit(
+            request,
+            session,
+            user.shadow_user_id,
+            map_id=map_id,
+            action="share_link.revoke",
+            details={"share_link_id": share_link_id},
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1098,10 +1118,29 @@ def public_share(token: str, request: Request) -> dict[str, object]:
         travel_map = session.get(TravelMap, item.map_id)
         if travel_map is None or travel_map.archived:
             raise HTTPException(status_code=404, detail={"code": "share_link_not_found"})
-        if item.last_accessed_at is None or _aware(item.last_accessed_at) <= (
+        record_access = item.last_accessed_at is None or _aware(item.last_accessed_at) <= (
             now - SHARE_ACCESS_WRITE_INTERVAL
-        ):
+        )
+        if record_access:
             item.last_accessed_at = now
+            session.add(
+                AuditEvent(
+                    actor_type="public_share",
+                    actor_id=f"share:{item.share_link_id}",
+                    action="share_link.access",
+                    resource_type="travel_map",
+                    resource_id=travel_map.map_id,
+                    request_id=request.state.request_id,
+                    result="success",
+                    details={
+                        "share_link_id": item.share_link_id,
+                        "correlation_id": request.state.correlation_id,
+                        "rate_limited_interval_seconds": int(
+                            SHARE_ACCESS_WRITE_INTERVAL.total_seconds()
+                        ),
+                    },
+                )
+            )
         rows = _map_point_rows(session, travel_map.map_id)
         payload: dict[str, object] = {
             "map": {
@@ -1114,23 +1153,7 @@ def public_share(token: str, request: Request) -> dict[str, object]:
                 "emoji": travel_map.emoji,
             },
             "view_state": item.view_state,
-            "points": [
-                {
-                    "place_id": place.place_id,
-                    "name": link.display_name or place.name,
-                    "address": place.address,
-                    "district": place.district,
-                    "city": place.city,
-                    "category": link.category,
-                    "tags": link.tags,
-                    "note": link.shared_note,
-                    "custom_values": link.custom_values,
-                    "longitude": place.longitude,
-                    "latitude": place.latitude,
-                    "coordinate_reference": place.coordinate_reference,
-                }
-                for link, place in rows
-            ],
+            "points": [_public_point(link, place) for link, place in rows],
         }
         if item.include_shared_records:
             photo_counts = _photo_count_subquery()
@@ -1424,6 +1447,26 @@ def _share_payload(item: TravelShareLink) -> dict[str, object]:
         "created_at": item.created_at,
         "last_accessed_at": item.last_accessed_at,
     }
+
+
+def _public_point(link: TravelMapPlace, place: TravelPlace) -> dict[str, object]:
+    precision = "hidden" if link.privacy_zone else link.public_location_precision
+    payload: dict[str, object] = {
+        "name": link.display_name or place.name,
+        "city": place.city,
+        "country_code": place.country_code,
+        "category": link.category,
+        "tags": link.tags,
+        "location_precision": precision,
+    }
+    if precision != "hidden":
+        digits = 5 if precision == "exact" else 2
+        payload["location"] = {
+            "longitude": round(place.longitude, digits),
+            "latitude": round(place.latitude, digits),
+            "coordinate_reference": place.coordinate_reference,
+        }
+    return payload
 
 
 def _token_hash(token: str) -> str:

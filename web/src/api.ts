@@ -1,4 +1,5 @@
-import { Place, Preference, TravelMap, TravelRoute, Visit } from "./types";
+import { pendingVisits, queueVisit, stableClientId, submitQueuedVisit } from "./offline";
+import { Place, Preference, TravelMap, TravelRoute, Trip, Visit } from "./types";
 
 export type CurrentUser = {
   shadow_user_id: string;
@@ -10,6 +11,7 @@ export type CurrentUser = {
 export const basePath = import.meta.env.BASE_URL;
 
 export type TravelWorkspace = {
+  trips: Trip[];
   maps: TravelMap[];
   places: Place[];
   visits: Visit[];
@@ -21,6 +23,9 @@ export type TravelCapabilities = {
   media: boolean;
   llm: boolean;
   international_maps: boolean;
+  location_history: boolean;
+  location_history_mode: "disabled" | "local" | "self-hosted";
+  continuous_tracking_default: false;
 };
 
 export type RouteDraft = {
@@ -148,20 +153,32 @@ export async function updateTravelPlace(
 
 export async function createVisit(placeId: string, input: {
   mapId?: string;
+  tripId?: string;
   visitedOn?: string;
   note?: string;
   rating?: number;
+  clientRecordId?: string;
 } = {}): Promise<Visit> {
   const today = input.visitedOn || new Date().toISOString().slice(0, 10);
-  return request<Visit>(`api/browser/v1/places/${placeId}/visits`, {
-    method: "POST",
-    body: JSON.stringify({
-      map_id: input.mapId,
-      visited_on: today,
-      note: input.note || "",
-      rating: input.rating
-    })
-  });
+  const payload = {
+    client_record_id: input.clientRecordId ?? stableClientId(),
+    map_id: input.mapId,
+    trip_id: input.tripId,
+    visited_on: today,
+    note: input.note || "",
+    rating: input.rating
+  };
+  if (!navigator.onLine) return queueVisit(placeId, payload);
+  try {
+    return await submitQueuedVisit(basePath, placeId, payload);
+  } catch (error) {
+    if (error instanceof TypeError) return queueVisit(placeId, payload);
+    throw error;
+  }
+}
+
+export function loadPendingVisits(): Visit[] {
+  return pendingVisits();
 }
 
 export async function updateTravelRoute(

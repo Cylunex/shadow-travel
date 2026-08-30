@@ -21,6 +21,7 @@ from shadow_travel.api import (
     machine,
     media,
     travel,
+    trips,
 )
 from shadow_travel.auth.oidc import OIDCClient
 from shadow_travel.auth.store import SQLAuthStore
@@ -90,7 +91,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def request_id_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         supplied = request.headers.get("x-request-id", "")
         request_id = supplied if REQUEST_ID_PATTERN.fullmatch(supplied) else secrets.token_hex(16)
+        supplied_correlation = request.headers.get("x-correlation-id", "")
+        correlation_id = (
+            supplied_correlation
+            if REQUEST_ID_PATTERN.fullmatch(supplied_correlation)
+            else request_id
+        )
         request.state.request_id = request_id
+        request.state.correlation_id = correlation_id
         browser_write = request.method not in {"GET", "HEAD", "OPTIONS"} and (
             request.url.path.startswith("/api/browser/")
             or request.url.path.startswith("/auth/logout")
@@ -102,10 +110,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return JSONResponse(
                     {"detail": {"code": "browser_origin_forbidden"}},
                     status_code=status.HTTP_403_FORBIDDEN,
-                    headers={"x-request-id": request_id},
+                    headers={"x-request-id": request_id, "x-correlation-id": correlation_id},
                 )
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
+        response.headers["x-correlation-id"] = correlation_id
         return response
 
     @app.get("/healthz", include_in_schema=False)
@@ -145,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(browser.router)
     app.include_router(travel.router)
+    app.include_router(trips.router)
     app.include_router(advanced.router)
     app.include_router(advanced.public_router)
     app.include_router(collaboration.router)

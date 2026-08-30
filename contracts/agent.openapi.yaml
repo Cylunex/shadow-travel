@@ -5,6 +5,16 @@ info:
 servers:
   - url: https://travel.example.com
 paths:
+  /api/machine/v1/agent/summary:
+    get:
+      operationId: get_travel_agent_summary
+      summary: Get a metadata-only Travel summary for granted resources
+      responses:
+        "200":
+          description: Stable Nexus and App summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TravelSummary" }
   /api/machine/v1/agent/maps:
     get:
       operationId: list_agent_maps
@@ -108,6 +118,33 @@ components:
       required: true
       schema: { type: string, minLength: 1, maxLength: 64 }
   schemas:
+    TravelSummary:
+      type: object
+      additionalProperties: false
+      required: [protocol, domain, summary, observed_at, data_freshness, correlation_id]
+      properties:
+        protocol: { const: shadow.domain-summary.v1 }
+        domain: { const: travel }
+        summary:
+          type: object
+          additionalProperties: false
+          required: [primary, detail, trips, maps, places, visits]
+          properties:
+            primary: { type: integer, minimum: 0 }
+            detail: { type: string }
+            trips: { type: integer, minimum: 0 }
+            maps: { type: integer, minimum: 0 }
+            places: { type: integer, minimum: 0 }
+            visits: { type: integer, minimum: 0 }
+        observed_at: { type: string, format: date-time }
+        data_freshness:
+          type: object
+          additionalProperties: false
+          required: [observed_at, missing_ratio]
+          properties:
+            observed_at: { type: string, format: date-time }
+            missing_ratio: { type: number, minimum: 0, maximum: 1 }
+        correlation_id: { type: string }
     NexusReviewCreate:
       type: object
       additionalProperties: false

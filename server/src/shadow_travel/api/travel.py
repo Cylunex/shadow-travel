@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
+import uuid
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -13,6 +17,7 @@ from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.infrastructure.models import (
     AuditEvent,
     ShadowUser,
+    TravelClientMutation,
     TravelMap,
     TravelMapFieldDefinition,
     TravelMapMember,
@@ -22,6 +27,7 @@ from shadow_travel.infrastructure.models import (
     TravelPlacePreference,
     TravelRoute,
     TravelRouteStop,
+    TravelTrip,
     TravelVisit,
     TravelVisitMapShare,
     TravelVisitRecord,
@@ -32,6 +38,7 @@ router = APIRouter(prefix="/api/browser/v1", tags=["travel"])
 
 Preference = Literal["none", "want", "planned", "skip"]
 RouteMode = Literal["walking", "driving", "transit", "bicycling"]
+CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 
 
 class MapCreate(BaseModel):
@@ -103,6 +110,8 @@ class PlaceCreate(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     custom_values: dict[str, object] = Field(default_factory=dict)
     counts_toward_progress: bool = True
+    public_location_precision: Literal["hidden", "approximate", "exact"] = "approximate"
+    privacy_zone: bool = False
 
 
 class PlaceUpdate(BaseModel):
@@ -123,6 +132,8 @@ class PlaceUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
     custom_values: dict[str, object] | None = None
     counts_toward_progress: bool | None = None
+    public_location_precision: Literal["hidden", "approximate", "exact"] | None = None
+    privacy_zone: bool | None = None
     expected_version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
@@ -142,15 +153,24 @@ class PreferenceUpdate(BaseModel):
 
 
 class VisitCreate(BaseModel):
+    client_record_id: str = Field(default_factory=lambda: str(uuid.uuid4()), max_length=128)
     map_id: str | None = Field(default=None, max_length=36)
+    trip_id: str | None = Field(default=None, max_length=36)
     visited_on: date = Field(default_factory=date.today)
     note: str = Field(default="", max_length=10_000)
     rating: int | None = Field(default=None, ge=1, le=5)
     share_completion: bool = True
     record_visibility: Literal["private", "shared"] = "private"
 
+    @model_validator(mode="after")
+    def validate_client_record_id(self) -> VisitCreate:
+        if not CLIENT_ID_PATTERN.fullmatch(self.client_record_id):
+            raise ValueError("client_record_id contains unsupported characters")
+        return self
+
 
 class VisitUpdate(BaseModel):
+    expected_version: int | None = Field(default=None, ge=1)
     visited_on: date | None = None
     note: str | None = Field(default=None, max_length=10_000)
     rating: int | None = Field(default=None, ge=1, le=5)
@@ -282,6 +302,11 @@ def workspace(
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
 ) -> dict[str, object]:
     with _session(request) as session:
+        trip_rows = session.scalars(
+            select(TravelTrip)
+            .where(TravelTrip.owner_user_id == user.shadow_user_id)
+            .order_by(TravelTrip.updated_at.desc())
+        ).all()
         map_rows = session.scalars(
             select(TravelMap)
             .join(TravelMapMember, TravelMapMember.map_id == TravelMap.map_id)
@@ -290,7 +315,14 @@ def workspace(
         ).all()
         map_ids = [item.map_id for item in map_rows]
         if not map_ids:
-            return {"maps": [], "places": [], "visits": [], "routes": [], "members": []}
+            return {
+                "trips": [_workspace_trip_payload(item) for item in trip_rows],
+                "maps": [],
+                "places": [],
+                "visits": [],
+                "routes": [],
+                "members": [],
+            }
 
         links = session.scalars(
             select(TravelMapPlace)
@@ -401,6 +433,7 @@ def workspace(
             stop_ids_by_route.setdefault(stop.route_id, []).append(stop.place_id)
 
         return {
+            "trips": [_workspace_trip_payload(item) for item in trip_rows],
             "maps": [
                 _map_payload(
                     item,
@@ -593,6 +626,8 @@ def add_place(
                     body.custom_values, body.recommended, body.price
                 ),
                 counts_toward_progress=body.counts_toward_progress,
+                public_location_precision=body.public_location_precision,
+                privacy_zone=body.privacy_zone,
                 position=int(position or 0) + 1,
                 added_by=user.shadow_user_id,
             )
@@ -697,6 +732,8 @@ def update_place(
             "display_name",
             "custom_values",
             "counts_toward_progress",
+            "public_location_precision",
+            "privacy_zone",
             "expected_version",
             "map_id",
         }
@@ -734,6 +771,10 @@ def update_place(
                 link.display_name = body.display_name.strip() or None
             if body.counts_toward_progress is not None:
                 link.counts_toward_progress = body.counts_toward_progress
+            if body.public_location_precision is not None:
+                link.public_location_precision = body.public_location_precision
+            if body.privacy_zone is not None:
+                link.privacy_zone = body.privacy_zone
             custom = dict(link.custom_values)
             if body.custom_values is not None:
                 custom = _validated_custom_values(session, link.map_id, body.custom_values)
@@ -861,18 +902,63 @@ def add_visit(
     body: VisitCreate,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object]:
+    key = idempotency_key or body.client_record_id
+    if not CLIENT_ID_PATTERN.fullmatch(key):
+        raise HTTPException(status_code=400, detail={"code": "invalid_idempotency_key"})
+    request_hash = _client_payload_hash(body.model_dump(mode="json"))
     with _session(request) as session, session.begin():
+        replay = _client_mutation_replay(
+            session, user.shadow_user_id, "visit.create", key, request_hash
+        )
+        if replay is not None:
+            return {**replay, "replayed": True}
         _accessible_place(session, place_id, user.shadow_user_id)
         if body.map_id:
             _accessible_map(session, body.map_id, user.shadow_user_id)
             linked = session.get(TravelMapPlace, (body.map_id, place_id))
             if linked is None:
                 raise HTTPException(status_code=422, detail={"code": "place_not_in_travel_map"})
+        if body.trip_id:
+            trip = session.get(TravelTrip, body.trip_id)
+            if trip is None or trip.owner_user_id != user.shadow_user_id:
+                raise HTTPException(status_code=404, detail={"code": "travel_trip_not_found"})
+        existing = session.scalar(
+            select(TravelVisit).where(
+                TravelVisit.shadow_user_id == user.shadow_user_id,
+                TravelVisit.client_record_id == body.client_record_id,
+            )
+        )
+        if existing is not None:
+            existing_record = session.scalar(
+                select(TravelVisitRecord).where(TravelVisitRecord.visit_id == existing.visit_id)
+            )
+            if existing.client_payload_hash != request_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "visit_client_record_conflict",
+                        "current": _visit_payload(existing, existing_record),
+                    },
+                )
+            response = {**_visit_payload(existing, existing_record), "replayed": True}
+            _store_client_mutation(
+                session,
+                user.shadow_user_id,
+                "visit.create",
+                key,
+                request_hash,
+                response,
+            )
+            return response
         visit = TravelVisit(
             place_id=place_id,
             shadow_user_id=user.shadow_user_id,
             source_map_id=body.map_id,
+            trip_id=body.trip_id,
+            client_record_id=body.client_record_id,
+            client_payload_hash=request_hash,
             visited_on=body.visited_on,
         )
         session.add(visit)
@@ -897,7 +983,24 @@ def add_visit(
                 session.add(
                     TravelVisitMapShare(visit_id=visit.visit_id, map_id=record.shared_map_id)
                 )
-        return _visit_payload(visit, record)
+        session.flush()
+        response = {**_visit_payload(visit, record), "replayed": False}
+        _store_client_mutation(
+            session, user.shadow_user_id, "visit.create", key, request_hash, response
+        )
+        _audit_map(
+            request,
+            session,
+            user.shadow_user_id,
+            body.map_id or body.trip_id or place_id,
+            "travel_visit.create",
+            {
+                "visit_id": visit.visit_id,
+                "client_record_id": body.client_record_id,
+                "correlation_id": request.state.correlation_id,
+            },
+        )
+        return response
 
 
 @router.patch("/visits/{visit_id}")
@@ -906,12 +1009,35 @@ def update_visit(
     body: VisitUpdate,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(current_browser_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object]:
+    request_hash = _client_payload_hash(body.model_dump(mode="json", exclude_unset=True))
+    operation = f"visit.update:{visit_id}"
+    if idempotency_key and not CLIENT_ID_PATTERN.fullmatch(idempotency_key):
+        raise HTTPException(status_code=400, detail={"code": "invalid_idempotency_key"})
     with _session(request) as session, session.begin():
+        if idempotency_key:
+            replay = _client_mutation_replay(
+                session, user.shadow_user_id, operation, idempotency_key, request_hash
+            )
+            if replay is not None:
+                return {**replay, "replayed": True}
         visit = session.get(TravelVisit, visit_id)
         if visit is None or visit.shadow_user_id != user.shadow_user_id:
             raise HTTPException(status_code=404, detail={"code": "travel_visit_not_found"})
+        if body.expected_version is not None and visit.version != body.expected_version:
+            current_record = session.scalar(
+                select(TravelVisitRecord).where(TravelVisitRecord.visit_id == visit_id)
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "travel_visit_version_conflict",
+                    "current": _visit_payload(visit, current_record),
+                },
+            )
         values = body.model_dump(exclude_unset=True)
+        values.pop("expected_version", None)
         if "visited_on" in values and values["visited_on"] is not None:
             visit.visited_on = values["visited_on"]
         record = session.scalar(
@@ -943,7 +1069,19 @@ def update_visit(
                 share = session.get(TravelVisitMapShare, (visit_id, visit.source_map_id))
                 if share:
                     session.delete(share)
-        return _visit_payload(visit, record)
+        visit.version += 1
+        session.flush()
+        response = {**_visit_payload(visit, record), "replayed": False}
+        if idempotency_key:
+            _store_client_mutation(
+                session,
+                user.shadow_user_id,
+                operation,
+                idempotency_key,
+                request_hash,
+                response,
+            )
+        return response
 
 
 @router.delete("/visits/{visit_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1231,6 +1369,8 @@ def _place_payload(
                 "note": link.shared_note,
                 "customValues": link.custom_values,
                 "countsTowardProgress": link.counts_toward_progress,
+                "publicLocationPrecision": link.public_location_precision,
+                "privacyZone": link.privacy_zone,
                 "position": link.position,
                 "version": link.version,
                 "preference": (preferences or {}).get((link.map_id, place.place_id), "none"),
@@ -1249,6 +1389,8 @@ def _visit_payload(
 ) -> dict[str, object]:
     return {
         "id": visit.visit_id,
+        "clientRecordId": visit.client_record_id,
+        "version": visit.version,
         "placeId": visit.place_id,
         "date": visit.visited_on.isoformat(),
         "displayDate": visit.visited_on.isoformat(),
@@ -1259,6 +1401,22 @@ def _visit_payload(
         "sharedMapId": record.shared_map_id if record else None,
         "photoCount": photo_count,
         "mapId": visit.source_map_id,
+        "tripId": visit.trip_id,
+    }
+
+
+def _workspace_trip_payload(trip: TravelTrip) -> dict[str, object]:
+    return {
+        "id": trip.trip_id,
+        "clientRecordId": trip.client_record_id,
+        "version": trip.version,
+        "sourceMapId": trip.source_map_id,
+        "title": trip.title,
+        "startDate": trip.start_date.isoformat() if trip.start_date else None,
+        "endDate": trip.end_date.isoformat() if trip.end_date else None,
+        "timezone": trip.timezone,
+        "status": trip.status,
+        "updatedAt": trip.updated_at.isoformat(),
     }
 
 
@@ -1320,6 +1478,51 @@ def _audit_map(
 def _ensure_visit_share(session: Session, visit_id: str, map_id: str) -> None:
     if session.get(TravelVisitMapShare, (visit_id, map_id)) is None:
         session.add(TravelVisitMapShare(visit_id=visit_id, map_id=map_id))
+
+
+def _client_payload_hash(value: object) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _client_mutation_replay(
+    session: Session,
+    owner_user_id: str,
+    operation: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> dict[str, object] | None:
+    item = session.scalar(
+        select(TravelClientMutation).where(
+            TravelClientMutation.owner_user_id == owner_user_id,
+            TravelClientMutation.operation == operation,
+            TravelClientMutation.idempotency_key == idempotency_key,
+        )
+    )
+    if item is None:
+        return None
+    if item.request_hash != request_hash:
+        raise HTTPException(status_code=409, detail={"code": "idempotency_key_reused"})
+    return item.response_json
+
+
+def _store_client_mutation(
+    session: Session,
+    owner_user_id: str,
+    operation: str,
+    idempotency_key: str,
+    request_hash: str,
+    response: dict[str, object],
+) -> None:
+    session.add(
+        TravelClientMutation(
+            owner_user_id=owner_user_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            response_json=response,
+        )
+    )
 
 
 def _validate_progress_values(

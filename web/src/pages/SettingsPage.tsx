@@ -28,6 +28,7 @@ export function SettingsPage({ user, demo }: { user: CurrentUser; demo: boolean 
           <section className="settings-section">
             <header><div><span className="eyebrow">MEDIA</span><h2>照片能力</h2></div><Image size={21} /></header>
             <div className="setting-row"><div><strong>Shadow Media</strong><span>照片保持私密，业务库只保存 media_id</span></div><em className={capabilities.media ? "status-good" : undefined}>{capabilities.media ? "已配置" : "等待配置"}</em></div>
+            <div className="setting-row"><div><strong>位置历史</strong><span>默认关闭；只接受本地或自托管适配器，不启用默认持续追踪</span></div><em className={capabilities.location_history ? "status-good" : undefined}>{capabilities.location_history ? capabilities.location_history_mode : "已关闭"}</em></div>
             <p className="setting-note"><ShieldCheck size={16} /> 上传时由后端申请一次性目标；原始 EXIF 与 GPS 默认清理，不生成永久公开地址。</p>
           </section>
         </main>

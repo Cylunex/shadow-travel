@@ -10,9 +10,14 @@ surfaces:
   - id: maps
     type: summary
     capability: travel.maps.read
-    operation_id: list_agent_maps
+    operation_id: get_travel_agent_summary
     display:
-      collection_pointer: /maps
+      metric_pointer: /summary/primary
+      detail_pointer: /summary/detail
+      metrics:
+        - { id: trips, label: 行程, value_pointer: /summary/trips, unit: 个, tone: neutral }
+        - { id: places, label: 地点, value_pointer: /summary/places, unit: 个, tone: neutral }
+        - { id: visits, label: 到访, value_pointer: /summary/visits, unit: 次, tone: good }
   - id: capture
     type: capture
     capability: travel.drafts.create

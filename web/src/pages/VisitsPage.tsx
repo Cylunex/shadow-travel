@@ -63,7 +63,7 @@ export function VisitsPage() {
               <button type="button" onClick={() => navigate(`/places/${place.id}`)}>
                 <div className="timeline-card-top">
                   <div><span className="eyebrow">{place.city} · {place.category}</span><h2>{place.name}</h2></div>
-                  {map && <span className="map-pill"><MapPinned size={12} /> {map.title}</span>}
+                  <div>{visit.syncState === "pending" && <span className="map-pill">待同步</span>}{visit.syncState === "conflict" && <span className="map-pill">冲突待处理</span>}{map && <span className="map-pill"><MapPinned size={12} /> {map.title}</span>}</div>
                 </div>
                 {visit.rating && <span className="personal-rating">个人感受 {visit.rating}/5</span>}
                 <p>{visit.note}</p>

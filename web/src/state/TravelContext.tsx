@@ -4,15 +4,18 @@ import {
   createTravelMap,
   createTravelPlace,
   createVisit,
+  basePath,
   loadCapabilities,
   loadWorkspace,
+  loadPendingVisits,
   updatePlacePreference,
   updateTravelPlace,
   updateTravelRoute
 } from "../api";
+import { replayPendingVisits } from "../offline";
 import { TravelCapabilities } from "../api";
 import { initialMaps, initialPlaces, initialRoutes, initialVisits, members as demoMembers } from "../data/demo";
-import { Member, Place, Preference, TravelMap, TravelRoute, Visit } from "../types";
+import { Member, Place, Preference, TravelMap, TravelRoute, Trip, Visit } from "../types";
 
 type NewMapInput = { title: string; city: string; subtitle: string; routeEnabled?: boolean };
 
@@ -29,6 +32,7 @@ export type NewPlaceInput = {
 };
 
 type TravelState = {
+  trips: Trip[];
   maps: TravelMap[];
   places: Place[];
   visits: Visit[];
@@ -52,9 +56,17 @@ type TravelState = {
 
 const TravelContext = createContext<TravelState | null>(null);
 const developmentDemo = import.meta.env.DEV;
-const unavailableCapabilities: TravelCapabilities = { media: false, llm: false, international_maps: false };
+const unavailableCapabilities: TravelCapabilities = {
+  media: false,
+  llm: false,
+  international_maps: false,
+  location_history: false,
+  location_history_mode: "disabled",
+  continuous_tracking_default: false
+};
 
 export function TravelProvider({ children }: { children: ReactNode }) {
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [maps, setMaps] = useState<TravelMap[]>(developmentDemo ? initialMaps : []);
   const [places, setPlaces] = useState<Place[]>(developmentDemo ? initialPlaces : []);
   const [visits, setVisits] = useState<Visit[]>(developmentDemo ? initialVisits : []);
@@ -67,9 +79,10 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (developmentDemo) return;
     const workspace = await loadWorkspace();
+    setTrips(workspace.trips ?? []);
     setMaps(workspace.maps);
     setPlaces(workspace.places);
-    setVisits(workspace.visits);
+    setVisits([...loadPendingVisits(), ...workspace.visits]);
     setRoutes(workspace.routes);
     setMembers(workspace.members);
   }, []);
@@ -82,9 +95,10 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       loadCapabilities().catch(() => unavailableCapabilities)
     ]).then(([workspace, loadedCapabilities]) => {
       if (!active) return;
+      setTrips(workspace.trips ?? []);
       setMaps(workspace.maps);
       setPlaces(workspace.places);
-      setVisits(workspace.visits);
+      setVisits([...loadPendingVisits(), ...workspace.visits]);
       setRoutes(workspace.routes);
       setMembers(workspace.members);
       setCapabilities(loadedCapabilities);
@@ -96,7 +110,16 @@ export function TravelProvider({ children }: { children: ReactNode }) {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (developmentDemo) return;
+    const replay = () => { void replayPendingVisits(basePath).then(refresh); };
+    window.addEventListener("online", replay);
+    if (navigator.onLine) replay();
+    return () => window.removeEventListener("online", replay);
+  }, [refresh]);
+
   const value = useMemo<TravelState>(() => ({
+    trips,
     maps,
     places,
     visits,
@@ -125,8 +148,9 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, visitedBy: ["me"] } : place));
         return;
       }
-      await createVisit(placeId, { mapId });
-      await refresh();
+      const created = await createVisit(placeId, { mapId });
+      if (created.syncState === "pending") setVisits((current) => [created, ...current]);
+      else await refresh();
     },
     addMap: async (input) => {
       if (!developmentDemo) {
@@ -201,8 +225,9 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, visitedBy: ["me"] } : place));
         return;
       }
-      await createVisit(placeId, input);
-      await refresh();
+      const created = await createVisit(placeId, input);
+      if (created.syncState === "pending") setVisits((current) => [created, ...current]);
+      else await refresh();
     },
     reorderRouteStop: async (routeId, index, direction) => {
       const route = routes.find((item) => item.id === routeId);
@@ -223,7 +248,7 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       if (!developmentDemo) await updateTravelRoute(routeId, { mode });
     },
     refresh
-  }), [capabilities, maps, members, places, refresh, routes, visits]);
+  }), [capabilities, maps, members, places, refresh, routes, trips, visits]);
 
   if (loading) return <div className="app-loading">正在加载你的旅行地图…</div>;
   if (error) return <div className="app-loading"><strong>{error}</strong><button type="button" onClick={() => window.location.reload()}>重新加载</button></div>;

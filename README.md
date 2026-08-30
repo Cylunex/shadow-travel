@@ -18,6 +18,7 @@ Shadow Travel 是个人地点、到访和旅行记忆中心。它既管理去过
 - 高德/Google 地图适配；
 - OIDC、成员协作、只读分享和机器同步；
 - Platform Asset、LLM 和 Agent 集成接口。
+- 离线安全 Trip/Visit、可验证 Trip Bundle、隐私分层与隔离恢复证据。
 
 ## 本地开发
 
@@ -39,3 +40,4 @@ npm run dev
 - [后端 API](docs/backend-api.md)
 - [开发说明](docs/development.md)
 - [Shadow App 接入](docs/shadowapp-integration.md)
+- [离线写入、隐私与 Trip Bundle 恢复](docs/offline-portability.md)

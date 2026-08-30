@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 from shadow_sdk.agent import AgentIdentity
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from shadow_travel.infrastructure.models import (
@@ -22,6 +22,8 @@ from shadow_travel.infrastructure.models import (
     TravelPlace,
     TravelRoute,
     TravelRouteStop,
+    TravelTrip,
+    TravelVisit,
 )
 from shadow_travel.integrations.agent import (
     AgentAccess,
@@ -143,6 +145,67 @@ def agent_maps(
                 }
                 for travel_map, grant in rows
             ]
+        }
+
+
+@router.get("/agent/summary", operation_id="get_travel_agent_summary")
+def agent_summary(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Return a stable, metadata-only Nexus/App projection for granted resources."""
+    identity = require_agent(request, authorization, scope="travel.maps.read")
+    with request.app.state.database.session_factory() as session:
+        grants = session.execute(
+            select(TravelAgentMapGrant.map_id, TravelAgentMapGrant.granted_by).where(
+                TravelAgentMapGrant.agent_id == identity.agent_id,
+                TravelAgentMapGrant.allow_read.is_(True),
+            )
+        ).all()
+        map_ids = [row.map_id for row in grants]
+        owner_ids = list({row.granted_by for row in grants})
+        place_count = 0
+        if map_ids:
+            place_count = int(
+                session.scalar(
+                    select(func.count(distinct(TravelMapPlace.place_id))).where(
+                        TravelMapPlace.map_id.in_(map_ids)
+                    )
+                )
+                or 0
+            )
+        trip_count = int(
+            session.scalar(
+                select(func.count(TravelTrip.trip_id)).where(
+                    TravelTrip.owner_user_id.in_(owner_ids)
+                )
+            )
+            or 0
+        ) if owner_ids else 0
+        visit_count = int(
+            session.scalar(
+                select(func.count(TravelVisit.visit_id)).where(
+                    TravelVisit.shadow_user_id.in_(owner_ids),
+                    TravelVisit.source_map_id.in_(map_ids),
+                )
+            )
+            or 0
+        ) if owner_ids and map_ids else 0
+        observed_at = datetime.now(UTC).isoformat()
+        return {
+            "protocol": "shadow.domain-summary.v1",
+            "domain": "travel",
+            "summary": {
+                "primary": trip_count,
+                "detail": f"{len(map_ids)} 张授权地图 · {place_count} 个地点",
+                "trips": trip_count,
+                "maps": len(map_ids),
+                "places": place_count,
+                "visits": visit_count,
+            },
+            "observed_at": observed_at,
+            "data_freshness": {"observed_at": observed_at, "missing_ratio": 0},
+            "correlation_id": request.state.correlation_id,
         }
 
 

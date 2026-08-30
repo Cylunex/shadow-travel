@@ -17,6 +17,17 @@ capabilities:
     audience: travel
     scopes: [travel.maps.read]
     tools:
+      - name: travel.summary.get
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: get_travel_agent_summary
+        exposure: hidden
+        result_mode: summary
+        max_result_bytes: 8192
+        max_model_chars: 1200
+        timeout_ms: 10000
+        concurrency_safe: true
+        retry_policy: idempotent
       - name: travel.maps.list
         transport: http
         contract_ref: contracts/agent.openapi.yaml

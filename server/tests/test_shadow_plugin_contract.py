@@ -141,6 +141,7 @@ def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        summary = client.get("/api/machine/v1/agent/summary", headers=headers)
         listed = client.get("/api/machine/v1/agent/maps", headers=headers)
         context = client.get("/api/machine/v1/agent/maps/map-example", headers=headers)
         created = client.post(
@@ -162,6 +163,10 @@ def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
             },
         )
 
+    assert summary.status_code == 200
+    assert summary.json()["protocol"] == "shadow.domain-summary.v1"
+    assert summary.json()["summary"]["maps"] == 1
+    assert "correlation_id" in summary.json()
     assert listed.status_code == 200
     assert listed.json()["maps"][0]["id"] == "map-example"
     assert set(context.json()) == {"map", "places", "routes"}

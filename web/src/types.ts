@@ -49,6 +49,8 @@ export type Place = {
 
 export type Visit = {
   id: string;
+  clientRecordId?: string;
+  version?: number;
   placeId: string;
   date: string;
   displayDate: string;
@@ -56,6 +58,22 @@ export type Visit = {
   rating?: number;
   photoCount: number;
   mapId?: string;
+  tripId?: string;
+  syncState?: "synced" | "pending" | "conflict";
+  conflict?: { code: string; current?: unknown };
+};
+
+export type Trip = {
+  id: string;
+  clientRecordId: string;
+  version: number;
+  sourceMapId?: string;
+  title: string;
+  startDate?: string;
+  endDate?: string;
+  timezone: string;
+  status: "planned" | "active" | "completed" | "cancelled";
+  updatedAt: string;
 };
 
 export type TravelRoute = {
