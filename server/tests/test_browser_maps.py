@@ -126,4 +126,7 @@ def test_browser_capabilities_expose_only_safe_feature_flags(settings_factory) -
         "media": False,
         "llm": False,
         "international_maps": False,
+        "continuous_tracking_default": False,
+        "location_history": False,
+        "location_history_mode": "disabled",
     }
