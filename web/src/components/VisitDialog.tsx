@@ -2,6 +2,8 @@ import { CalendarDays, Check, LockKeyhole, Users } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 
 import { Visit } from "../types";
+import { localDate } from "../domain";
+import { stableClientId } from "../offline";
 import { Modal } from "./Shared";
 
 type VisitDraft = { visitedOn: string; note: string; rating: string };
@@ -11,20 +13,25 @@ export function VisitDialog({
   visits,
   onClose,
   onSave,
-  onReuse
+  onReuse,
+  timezone,
+  sharedCompletion = false
 }: {
   placeName: string;
   visits: Visit[];
   onClose: () => void;
-  onSave: (draft: { visitedOn: string; note?: string; rating?: number }) => Promise<void>;
+  onSave: (draft: { visitedOn: string; note?: string; rating?: number; clientRecordId: string }) => Promise<void>;
   onReuse?: (visit: Visit) => void;
+  timezone?: string;
+  sharedCompletion?: boolean;
 }) {
   const [draft, setDraft] = useState<VisitDraft>({
-    visitedOn: new Date().toISOString().slice(0, 10),
+    visitedOn: localDate(timezone),
     note: "",
     rating: ""
   });
   const [saving, setSaving] = useState(false);
+  const [clientRecordId] = useState(() => stableClientId());
   const [error, setError] = useState<string>();
   const existing = useMemo(
     () => visits.find((visit) => visit.date === draft.visitedOn),
@@ -38,6 +45,7 @@ export function VisitDialog({
     setError(undefined);
     try {
       await onSave({
+        clientRecordId,
         visitedOn: draft.visitedOn,
         note: draft.note.trim() || undefined,
         rating: draft.rating ? Number(draft.rating) : undefined
@@ -69,7 +77,7 @@ export function VisitDialog({
         </div>
         <div className="visit-privacy-note">
           <Users size={17} />
-          <p><strong>完成状态会与当前主题同行共享</strong><span><LockKeyhole size={13} /> 照片、评分和个人记录默认仍然私密。</span></p>
+          <p><strong>{sharedCompletion ? "完成状态会与当前主题同行共享" : "本次到访默认仅自己可见"}</strong><span><LockKeyhole size={13} /> 照片、评分和个人记录默认仍然私密。</span></p>
         </div>
         {error && <div className="map-search-error">{error}</div>}
         <div className="form-actions">

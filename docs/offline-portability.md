@@ -6,6 +6,18 @@ to Platform Asset or Archive resources and never copies original bytes into its 
 
 ## Offline write contract
 
+The current web client uses account- and instance-scoped IndexedDB, not an unowned localStorage queue.
+It deletes one outbox entry only after a successful acknowledgement, uses Web Locks when available,
+and sends `X-Travel-Owner` to prevent a cookie/account-switch race. Legacy unowned queues are export-only.
+Static assets are precached from the build manifest, with a scope-specific cache prefix; sibling apps,
+authentication, private APIs, and map tiles are excluded. Local-read mode is explicitly different from
+an authenticated server session and does not depend solely on `navigator.onLine`.
+
+Confirmed **Trip Packs** are separate from **Trip Bundles**: Packs expire after seven days and contain
+confirmed planning data, place facts and the downloader's own visits, but no offline basemap, original
+documents or photos. They require an explicit trusted-device download. IndexedDB is not encrypted;
+an offline device cannot instantly receive permission revocations. See [delivery boundaries](lifecycle-implementation.md).
+
 `Trip` and `Visit` mutations use a client-generated `client_record_id`, an integer `version`,
 `Idempotency-Key`, and `X-Correlation-Id`:
 

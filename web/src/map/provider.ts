@@ -13,20 +13,22 @@ function amapExternalUrl(place: Place): string {
   url.searchParams.set("position", `${place.coordinate.longitude},${place.coordinate.latitude}`);
   url.searchParams.set("name", place.name);
   url.searchParams.set("src", "shadow-travel");
-  url.searchParams.set("coordinate", "gaode");
+  url.searchParams.set("coordinate", place.coordinate.reference === "WGS84" ? "wgs84" : "gaode");
   url.searchParams.set("callnative", "1");
   return url.toString();
 }
 
 function amapRouteUrl(stops: Place[], mode: "walking" | "transit" | "driving" | "bicycling"): string | undefined {
   if (stops.length < 2) return undefined;
+  // URI API accepts one via point, and only for driving. Never silently drop stops.
+  if (stops.length > (mode === "driving" ? 3 : 2) || stops.some(p => p.coordinate.reference === "WGS84")) return undefined;
   const first = stops[0];
   const last = stops[stops.length - 1];
   const url = new URL("https://uri.amap.com/navigation");
   url.searchParams.set("from", `${first.coordinate.longitude},${first.coordinate.latitude},${first.name}`);
   url.searchParams.set("to", `${last.coordinate.longitude},${last.coordinate.latitude},${last.name}`);
-  if (stops.length > 2) {
-    const via = stops[Math.floor(stops.length / 2)];
+  if (stops.length === 3 && mode === "driving") {
+    const via = stops[1];
     url.searchParams.set("via", `${via.coordinate.longitude},${via.coordinate.latitude},${via.name}`);
   }
   url.searchParams.set("mode", { walking: "walk", transit: "bus", driving: "car", bicycling: "ride" }[mode]);

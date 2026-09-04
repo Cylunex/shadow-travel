@@ -183,6 +183,75 @@ class TravelTrip(Base):
     )
 
 
+class TravelTripMember(Base):
+    __tablename__ = "travel_trip_members"
+    trip_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(16), default="viewer")
+
+
+class TravelPlan(Base):
+    __tablename__ = "travel_plans"
+    trip_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    approved_revision: Mapped[int | None] = mapped_column(Integer)
+    document: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class TravelPlanVersion(Base):
+    __tablename__ = "travel_plan_versions"
+    trip_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document: Mapped[dict] = mapped_column(JSON)
+    approved_by: Mapped[str] = mapped_column(ForeignKey("shadow_users.shadow_user_id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TravelCapture(Base):
+    __tablename__ = "travel_captures"
+    __table_args__ = (Index("ix_capture_owner_created", "owner_user_id", "created_at"),)
+    capture_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE")
+    )
+    text: Mapped[str] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    place_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_places.place_id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TravelExperience(Base):
+    __tablename__ = "travel_experiences"
+    __table_args__ = (Index("ix_experience_owner_trip", "owner_user_id", "trip_id"),)
+    experience_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE")
+    )
+    trip_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="SET NULL")
+    )
+    kind: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(200))
+    occurred_on: Mapped[date] = mapped_column(Date)
+    document: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class TravelMapMember(Base):
     __tablename__ = "travel_map_members"
 

@@ -67,9 +67,10 @@ export function RoutePage() {
   if (!route) {
     return <div className="content-page"><EmptyState icon={<RouteIcon />} title="没有找到这条路线">路线可能还没有保存。</EmptyState></div>;
   }
-  const externalMapUrl = mapProvider.externalRouteUrl(stops, mode);
-  const distance = routeResult?.distanceMeters ? formatDistance(routeResult.distanceMeters) : route.distance;
-  const duration = routeResult?.durationSeconds ? formatDuration(routeResult.durationSeconds) : route.duration;
+  const wholeRouteUrl = mapProvider.externalRouteUrl(stops, mode);
+  const externalMapUrl = wholeRouteUrl || mapProvider.externalRouteUrl(stops.slice(0, 2), mode);
+  const distance = routeResult ? formatDistance(routeResult.distanceMeters) : "距离待核验";
+  const duration = routeResult ? formatDuration(routeResult.durationSeconds) : "预计时间未知";
 
   return (
     <div className="route-page">
@@ -124,7 +125,8 @@ export function RoutePage() {
             ))}
           </div>
           <div className="route-actions">
-            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">在{mapProvider.label}中打开 <ExternalLink size={16} /></a> : <button className="primary-button" type="button" onClick={() => { setToast("外部地图跳转暂未配置"); window.setTimeout(() => setToast(undefined), 2200); }}>在{mapProvider.label}中打开 <ExternalLink size={16} /></button>}
+            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">{wholeRouteUrl ? `在${mapProvider.label}中打开` : "高德打开首段（非整条路线）"} <ExternalLink size={16} /></a> : <span className="lifecycle-hint">当前坐标或路线不支持直接跳转，请逐个地点打开导航。</span>}
+            {!wholeRouteUrl && stops.length > 2 && <p className="lifecycle-hint">高德 URI 不能完整携带当前多站路线，请分段导航；不会静默忽略中间地点。</p>}
           </div>
         </aside>
         <main className="route-map-area">

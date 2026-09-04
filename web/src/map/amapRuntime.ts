@@ -150,10 +150,13 @@ async function planLeg(
   );
   const primary = firstRouteRecord(result);
   const path = collectCoordinates(primary ?? result);
+  const distance = numeric(primary?.distance) ?? numeric(result.distance);
+  const duration = numeric(primary?.time) ?? numeric(primary?.duration) ?? numeric(result.time);
+  if (!path.length || distance === undefined || duration === undefined) throw new Error("高德未返回完整路线与耗时，请使用外部导航核验");
   return {
-    path: path.length ? path : [origin, destination],
-    distanceMeters: numeric(primary?.distance) ?? numeric(result.distance) ?? 0,
-    durationSeconds: numeric(primary?.time) ?? numeric(primary?.duration) ?? numeric(result.time) ?? 0
+    path,
+    distanceMeters: distance,
+    durationSeconds: duration
   };
 }
 
@@ -235,8 +238,23 @@ function text(value: unknown): string | undefined {
 }
 
 function numeric(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export async function coordinateForAMap(point: Place["coordinate"]): Promise<Place["coordinate"]> {
+  if (point.reference !== "WGS84") return point;
+  const api = await loadAMap();
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("坐标转换超时，未绘制不匹配的地点")), 10000);
+    api.convertFrom([point.longitude, point.latitude], "gps", (status: string, result: { locations?: AMap.LngLat[] }) => {
+      window.clearTimeout(timeout);
+      const converted = result.locations?.[0];
+      if (status !== "complete" || !converted) reject(new Error("WGS-84 转高德坐标失败"));
+      else resolve({ ...point, longitude: converted.getLng(), latitude: converted.getLat(), reference: "GCJ02" });
+    });
+  });
 }
 
 function title(value: string): string {

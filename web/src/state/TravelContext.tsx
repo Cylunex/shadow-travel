@@ -12,7 +12,10 @@ import {
   updateTravelPlace,
   updateTravelRoute
 } from "../api";
-import { replayPendingVisits } from "../offline";
+import { configureOffline, localEntries, replayPendingVisits } from "../offline";
+import { localDate, placeInMap } from "../domain";
+import type { TravelWorkspace } from "../api";
+import type { PlanState } from "../features/lifecycle";
 import { TravelCapabilities } from "../api";
 import { initialMaps, initialPlaces, initialRoutes, initialVisits, members as demoMembers } from "../data/demo";
 import { Member, Place, Preference, TravelMap, TravelRoute, Trip, Visit } from "../types";
@@ -46,8 +49,8 @@ type TravelState = {
   markVisited: (placeId: string, mapId?: string) => Promise<void>;
   addMap: (input: NewMapInput) => Promise<TravelMap>;
   addPlace: (mapId: string, input: NewPlaceInput) => Promise<Place>;
-  updatePlace: (placeId: string, input: { note?: string }) => Promise<void>;
-  recordVisit: (placeId: string, input: { mapId?: string; visitedOn?: string; note?: string; rating?: number }) => Promise<void>;
+  updatePlace: (placeId: string, input: { note?: string; mapId?: string; expectedVersion?: number }) => Promise<void>;
+  recordVisit: (placeId: string, input: { mapId?: string; tripId?: string; visitedOn?: string; note?: string; rating?: number; clientRecordId?: string }) => Promise<Visit | void>;
   reorderRouteStop: (routeId: string, index: number, direction: -1 | 1) => Promise<void>;
   setRouteOrder: (routeId: string, stopIds: string[]) => Promise<void>;
   setRouteMode: (routeId: string, mode: TravelRoute["mode"]) => Promise<void>;
@@ -55,7 +58,6 @@ type TravelState = {
 };
 
 const TravelContext = createContext<TravelState | null>(null);
-const developmentDemo = import.meta.env.DEV;
 const unavailableCapabilities: TravelCapabilities = {
   media: false,
   llm: false,
@@ -65,7 +67,9 @@ const unavailableCapabilities: TravelCapabilities = {
   continuous_tracking_default: false
 };
 
-export function TravelProvider({ children }: { children: ReactNode }) {
+export function TravelProvider({ children, userId, demo = false }: { children: ReactNode; userId: string; demo?: boolean }) {
+  const developmentDemo = demo;
+  configureOffline(userId, basePath);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [maps, setMaps] = useState<TravelMap[]>(developmentDemo ? initialMaps : []);
   const [places, setPlaces] = useState<Place[]>(developmentDemo ? initialPlaces : []);
@@ -78,29 +82,28 @@ export function TravelProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     if (developmentDemo) return;
-    const workspace = await loadWorkspace();
+    const workspace = await loadWorkspace().catch(async (reason) => {
+      if (navigator.onLine && !(reason instanceof TypeError)) throw reason;
+      const packs = (await localEntries<PlanState>("pack")).map(row => row.value).filter(pack => pack.offline && new Date(pack.offline.expires_at) > new Date());
+      if (!packs.length) throw reason;
+      return { trips: packs.map(p => p.trip), maps: [], places: [...new Map(packs.flatMap(p => p.places).map(p => [p.id, p])).values()], visits: packs.flatMap(p => p.visits || []), routes: [], members: [] } as TravelWorkspace;
+    });
     setTrips(workspace.trips ?? []);
     setMaps(workspace.maps);
     setPlaces(workspace.places);
-    setVisits([...loadPendingVisits(), ...workspace.visits]);
+    setVisits([...await loadPendingVisits(), ...workspace.visits]);
     setRoutes(workspace.routes);
     setMembers(workspace.members);
-  }, []);
+  }, [developmentDemo, userId]);
 
   useEffect(() => {
     if (developmentDemo) return;
     let active = true;
     Promise.all([
-      loadWorkspace(),
+      refresh(),
       loadCapabilities().catch(() => unavailableCapabilities)
-    ]).then(([workspace, loadedCapabilities]) => {
+    ]).then(([, loadedCapabilities]) => {
       if (!active) return;
-      setTrips(workspace.trips ?? []);
-      setMaps(workspace.maps);
-      setPlaces(workspace.places);
-      setVisits([...loadPendingVisits(), ...workspace.visits]);
-      setRoutes(workspace.routes);
-      setMembers(workspace.members);
       setCapabilities(loadedCapabilities);
     }).catch((reason) => {
       if (active) setError(reason instanceof Error ? reason.message : "旅行数据加载失败");
@@ -108,11 +111,11 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     if (developmentDemo) return;
-    const replay = () => { void replayPendingVisits(basePath).then(refresh); };
+    const replay = () => { void replayPendingVisits(basePath).then(refresh).catch(() => { /* Outbox remains visible and recoverable in Settings. */ }); };
     window.addEventListener("online", replay);
     if (navigator.onLine) replay();
     return () => window.removeEventListener("online", replay);
@@ -121,24 +124,25 @@ export function TravelProvider({ children }: { children: ReactNode }) {
   const value = useMemo<TravelState>(() => ({
     trips,
     maps,
-    places,
+    places: places.map(place => visits.some(visit => visit.placeId === place.id) ? { ...place, visitedBy: [...new Set([...place.visitedBy, "me"])] } : place),
     visits,
     routes,
     members,
     capabilities,
     mapById: (id) => maps.find((map) => map.id === id),
     placeById: (id) => places.find((place) => place.id === id),
-    placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)),
+    placesForMap: (mapId) => places.filter((place) => place.mapIds.includes(mapId)).map(place => placeInMap(place, mapId)),
     setPreference: async (placeId, preference, mapId) => {
-      setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, preference } : place));
-      if (!developmentDemo) await updatePlacePreference(placeId, preference, mapId);
+      if (!mapId) throw new Error("请先选择要修改意愿的主题");
+      if (!developmentDemo) { await updatePlacePreference(placeId, preference, mapId); await refresh(); }
+      else setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, preference } : place));
     },
     markVisited: async (placeId, mapId) => {
       if (developmentDemo) {
         const visit: Visit = {
           id: `visit-${placeId}-${Date.now()}`,
           placeId,
-          date: new Date().toISOString().slice(0, 10),
+          date: localDate(),
           displayDate: "今天",
           note: "",
           photoCount: 0,
@@ -206,15 +210,15 @@ export function TravelProvider({ children }: { children: ReactNode }) {
       return created;
     },
     updatePlace: async (placeId, input) => {
-      setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, ...input } : place));
-      if (!developmentDemo) await updateTravelPlace(placeId, input);
+      if (!developmentDemo) { await updateTravelPlace(placeId, input); await refresh(); }
+      else setPlaces((current) => current.map((place) => place.id === placeId ? { ...place, ...input } : place));
     },
     recordVisit: async (placeId, input) => {
       if (developmentDemo) {
         const visit: Visit = {
           id: `visit-${placeId}-${Date.now()}`,
           placeId,
-          date: input.visitedOn || new Date().toISOString().slice(0, 10),
+          date: input.visitedOn || localDate(),
           displayDate: input.visitedOn || "今天",
           note: input.note || "",
           rating: input.rating,
@@ -226,8 +230,9 @@ export function TravelProvider({ children }: { children: ReactNode }) {
         return;
       }
       const created = await createVisit(placeId, input);
-      if (created.syncState === "pending") setVisits((current) => [created, ...current]);
-      else await refresh();
+      setVisits((current) => [created, ...current.filter(item => item.id !== created.id)]);
+      if (created.syncState !== "pending") await refresh().catch(() => undefined);
+      return created;
     },
     reorderRouteStop: async (routeId, index, direction) => {
       const route = routes.find((item) => item.id === routeId);

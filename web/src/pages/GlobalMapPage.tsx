@@ -27,7 +27,7 @@ export function GlobalMapPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [selected, setSelected] = useState<Place>();
-  const [panelMode, setPanelMode] = useState<PanelMode>("maps");
+  const [panelMode, setPanelMode] = useState<PanelMode>("places");
   const [mobilePanel, setMobilePanel] = useState(false);
 
   const visiblePlaces = useMemo(() => {
@@ -69,7 +69,7 @@ export function GlobalMapPage() {
         </div>
         <div className="atlas-top-actions">
           {members.length > 1 && <AvatarStack members={members} label={`${members.length} 位同行人`} />}
-          <button className="secondary-button" type="button" onClick={() => navigate("/maps")}><Plus size={17} /> 新建主题</button>
+          <button className="primary-button" type="button" onClick={() => navigate("/capture")}><Plus size={17} /> 收集地点</button>
         </div>
       </header>
 
@@ -78,7 +78,7 @@ export function GlobalMapPage() {
           <div className="panel-handle" />
           <div className="atlas-panel-heading">
             <div><span className="eyebrow">MY ATLAS</span><strong>{panelMode === "maps" ? "主题地图" : "地点清单"}</strong></div>
-            <button className="panel-add" type="button" onClick={() => navigate("/maps")} aria-label="新建主题地图"><Plus size={17} /></button>
+            <button className="panel-add" type="button" onClick={() => navigate("/capture")} aria-label="收集地点"><Plus size={17} /></button>
           </div>
           <div className="segmented-control atlas-panel-switch">
             <button type="button" className={panelMode === "maps" ? "active" : ""} onClick={() => setPanelMode("maps")}><Layers3 size={14} /> 主题</button>

@@ -35,7 +35,8 @@ export type Place = {
   category: string;
   tags: string[];
   note: string;
-  coordinate: { x: number; y: number; longitude: number; latitude: number };
+  coordinate: { x: number; y: number; longitude: number; latitude: number; reference?: "GCJ02" | "WGS84" };
+  mapPoints?: Array<{ mapId: string; displayName?: string; category: string; tags: string[]; note: string; customValues: Record<string, unknown>; preference: Preference; version: number }>;
   provider: "amap" | "manual";
   providerPlaceId?: string;
   mapIds: string[];

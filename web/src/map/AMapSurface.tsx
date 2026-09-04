@@ -178,7 +178,10 @@ export function AMapSurface({
 function locate(map: AMap.Map | null) {
   if (!map || !navigator.geolocation) return map?.setFitView();
   navigator.geolocation.getCurrentPosition(
-    ({ coords }) => map.setZoomAndCenter(15, [coords.longitude, coords.latitude]),
+    ({ coords }) => { void loadAMap().then(api => api.convertFrom([coords.longitude, coords.latitude], "gps", (status: string, result: { locations?: AMap.LngLat[] }) => {
+      const point = result.locations?.[0];
+      if (status === "complete" && point) map.setZoomAndCenter(15, [point.getLng(), point.getLat()]);
+    })); },
     () => map.setFitView(),
     { enableHighAccuracy: true, timeout: 8000 }
   );

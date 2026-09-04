@@ -21,4 +21,7 @@ async def current_browser_user(request: Request) -> AuthenticatedUser:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "browser_session_invalid"},
         )
+    expected_owner = request.headers.get("X-Travel-Owner")
+    if expected_owner and expected_owner != user.shadow_user_id:
+        raise HTTPException(status_code=409, detail={"code": "session_owner_changed"})
     return user

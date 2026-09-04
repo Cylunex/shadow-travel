@@ -1,5 +1,6 @@
-import { pendingVisits, queueVisit, stableClientId, submitQueuedVisit } from "./offline";
+import { currentOfflineUser, isLocalReadMode, pendingVisits, queueVisit, stableClientId, submitQueuedVisit } from "./offline";
 import { Place, Preference, TravelMap, TravelRoute, Trip, Visit } from "./types";
+import { localDate } from "./domain";
 
 export type CurrentUser = {
   shadow_user_id: string;
@@ -143,11 +144,11 @@ export async function updatePlacePreference(placeId: string, preference: Prefere
 
 export async function updateTravelPlace(
   placeId: string,
-  input: { note?: string; name?: string; category?: string; tags?: string[] }
+  input: { note?: string; name?: string; category?: string; tags?: string[]; mapId?: string; expectedVersion?: number }
 ): Promise<void> {
   await request(`api/browser/v1/places/${placeId}`, {
     method: "PATCH",
-    body: JSON.stringify(input)
+    body: JSON.stringify({ ...input, map_id: input.mapId, expected_version: input.expectedVersion })
   });
 }
 
@@ -159,7 +160,7 @@ export async function createVisit(placeId: string, input: {
   rating?: number;
   clientRecordId?: string;
 } = {}): Promise<Visit> {
-  const today = input.visitedOn || new Date().toISOString().slice(0, 10);
+  const today = input.visitedOn || localDate();
   const payload = {
     client_record_id: input.clientRecordId ?? stableClientId(),
     map_id: input.mapId,
@@ -168,7 +169,7 @@ export async function createVisit(placeId: string, input: {
     note: input.note || "",
     rating: input.rating
   };
-  if (!navigator.onLine) return queueVisit(placeId, payload);
+  if (!navigator.onLine || isLocalReadMode()) return queueVisit(placeId, payload);
   try {
     return await submitQueuedVisit(basePath, placeId, payload);
   } catch (error) {
@@ -177,7 +178,7 @@ export async function createVisit(placeId: string, input: {
   }
 }
 
-export function loadPendingVisits(): Visit[] {
+export function loadPendingVisits(): Promise<Visit[]> {
   return pendingVisits();
 }
 
@@ -268,9 +269,11 @@ export async function acceptMapInvitation(token: string): Promise<{ map_id: stri
   });
 }
 
-async function request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  if (isLocalReadMode() && init.method && init.method !== "GET") throw new Error("本地读取模式：请恢复原账号在线会话后修改；到访可先存入设备队列");
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
+  if (currentOfflineUser()) headers.set("X-Travel-Owner", currentOfflineUser());
   if (init.body) headers.set("Content-Type", "application/json");
   const response = await fetch(`${basePath}${path}`, {
     ...init,

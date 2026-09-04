@@ -25,9 +25,12 @@ from shadow_travel.infrastructure.models import (
     TravelPhoto,
     TravelPlace,
     TravelPlacePreference,
+    TravelPlan,
+    TravelPlanVersion,
     TravelRoute,
     TravelRouteStop,
     TravelTrip,
+    TravelTripMember,
     TravelVisit,
     TravelVisitMapShare,
     TravelVisitRecord,
@@ -245,6 +248,11 @@ def _editable_place(session: Session, place_id: str, user_id: str) -> TravelPlac
 
 
 def _accessible_place(session: Session, place_id: str, user_id: str) -> TravelPlace:
+    owned = session.get(TravelPlace, place_id)
+    if owned is not None and owned.owner_user_id == user_id:
+        return owned
+    if owned is not None and place_id in _trip_place_ids(session, user_id):
+        return owned
     place = session.scalar(
         select(TravelPlace)
         .join(TravelMapPlace, TravelMapPlace.place_id == TravelPlace.place_id)
@@ -258,6 +266,24 @@ def _accessible_place(session: Session, place_id: str, user_id: str) -> TravelPl
     if place is None:
         raise HTTPException(status_code=404, detail={"code": "travel_place_not_found"})
     return place
+
+
+def _trip_place_ids(session: Session, user_id: str) -> set[str]:
+    trip_ids = select(TravelTrip.trip_id).where(
+        (TravelTrip.owner_user_id == user_id)
+        | TravelTrip.trip_id.in_(
+            select(TravelTripMember.trip_id).where(TravelTripMember.user_id == user_id)
+        )
+    )
+    plans = session.scalars(select(TravelPlan).where(TravelPlan.trip_id.in_(trip_ids))).all()
+    result: set[str] = set()
+    for plan in plans:
+        result.update(plan.document.get("candidates", []))
+        if plan.approved_revision:
+            approved = session.get(TravelPlanVersion, (plan.trip_id, plan.approved_revision))
+            if approved:
+                result.update(approved.document.get("candidates", []))
+    return result
 
 
 def _accessible_map_point(
@@ -304,7 +330,14 @@ def workspace(
     with _session(request) as session:
         trip_rows = session.scalars(
             select(TravelTrip)
-            .where(TravelTrip.owner_user_id == user.shadow_user_id)
+            .where(
+                (TravelTrip.owner_user_id == user.shadow_user_id)
+                | TravelTrip.trip_id.in_(
+                    select(TravelTripMember.trip_id).where(
+                        TravelTripMember.user_id == user.shadow_user_id
+                    )
+                )
+            )
             .order_by(TravelTrip.updated_at.desc())
         ).all()
         map_rows = session.scalars(
@@ -314,22 +347,25 @@ def workspace(
             .order_by(TravelMap.archived, TravelMap.updated_at.desc())
         ).all()
         map_ids = [item.map_id for item in map_rows]
-        if not map_ids:
-            return {
-                "trips": [_workspace_trip_payload(item) for item in trip_rows],
-                "maps": [],
-                "places": [],
-                "visits": [],
-                "routes": [],
-                "members": [],
-            }
-
         links = session.scalars(
             select(TravelMapPlace)
             .where(TravelMapPlace.map_id.in_(map_ids))
             .order_by(TravelMapPlace.map_id, TravelMapPlace.position)
         ).all()
         place_ids = list(dict.fromkeys(link.place_id for link in links))
+        place_ids += sorted(_trip_place_ids(session, user.shadow_user_id))
+        place_ids = list(
+            dict.fromkeys(
+                place_ids
+                + list(
+                    session.scalars(
+                        select(TravelPlace.place_id).where(
+                            TravelPlace.owner_user_id == user.shadow_user_id
+                        )
+                    ).all()
+                )
+            )
+        )
         places = (
             session.scalars(select(TravelPlace).where(TravelPlace.place_id.in_(place_ids))).all()
             if place_ids
@@ -913,6 +949,8 @@ def add_visit(
             session, user.shadow_user_id, "visit.create", key, request_hash
         )
         if replay is not None:
+            if replay.get("placeId") != place_id:
+                raise HTTPException(409, detail={"code": "visit_client_record_place_conflict"})
             return {**replay, "replayed": True}
         _accessible_place(session, place_id, user.shadow_user_id)
         if body.map_id:
@@ -922,7 +960,10 @@ def add_visit(
                 raise HTTPException(status_code=422, detail={"code": "place_not_in_travel_map"})
         if body.trip_id:
             trip = session.get(TravelTrip, body.trip_id)
-            if trip is None or trip.owner_user_id != user.shadow_user_id:
+            if trip is None or (
+                trip.owner_user_id != user.shadow_user_id
+                and not session.get(TravelTripMember, (body.trip_id, user.shadow_user_id))
+            ):
                 raise HTTPException(status_code=404, detail={"code": "travel_trip_not_found"})
         existing = session.scalar(
             select(TravelVisit).where(
@@ -934,7 +975,7 @@ def add_visit(
             existing_record = session.scalar(
                 select(TravelVisitRecord).where(TravelVisitRecord.visit_id == existing.visit_id)
             )
-            if existing.client_payload_hash != request_hash:
+            if existing.client_payload_hash != request_hash or existing.place_id != place_id:
                 raise HTTPException(
                     status_code=409,
                     detail={
@@ -1352,6 +1393,7 @@ def _place_payload(
             "y": 20 + abs(place.latitude * 19) % 60,
             "longitude": place.longitude,
             "latitude": place.latitude,
+            "reference": place.coordinate_reference,
         },
         "provider": place.provider,
         "providerPlaceId": place.provider_place_id,

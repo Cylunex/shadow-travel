@@ -25,6 +25,7 @@ import { PhotoRecord, loadPhotoUrl, loadPlacePhotos, uploadPlacePhoto } from "..
 import { mapProviderForCountry } from "../map/provider";
 import { useTravel } from "../state/TravelContext";
 import { Preference } from "../types";
+import { placeInMap } from "../domain";
 
 const preferenceLabels: { value: Preference; label: string }[] = [
   { value: "none", label: "未标记" },
@@ -34,10 +35,13 @@ const preferenceLabels: { value: Preference; label: string }[] = [
 ];
 
 export function PlacePage() {
-  const { placeId } = useParams();
+  const { placeId, mapId: contextMapId } = useParams();
   const { placeById, maps, visits, members, capabilities, setPreference, updatePlace, recordVisit } = useTravel();
   const navigate = useNavigate();
-  const place = placeById(placeId);
+  const fact = placeById(placeId);
+  const [chosenMapId, setChosenMapId] = useState<string>();
+  const activeMapId = contextMapId || chosenMapId;
+  const place = fact ? placeInMap(fact, activeMapId) : undefined;
   const [toast, setToast] = useState<string>();
   const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
@@ -48,7 +52,6 @@ export function PlacePage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activePlace = place;
-  const activeMapId = activePlace?.mapIds[0];
 
   const refreshPhotos = useCallback(async () => {
     if (!capabilities.media || !activePlace || !activeMapId) return;
@@ -92,7 +95,8 @@ export function PlacePage() {
     event.preventDefault();
     setSaving(true);
     try {
-      await updatePlace(placeData.id, { note: noteDraft });
+      if (!activeMapId) throw new Error("请先选择要编辑的主题");
+      await updatePlace(placeData.id, { note: noteDraft, mapId: activeMapId, expectedVersion: fact?.mapPoints?.find(point => point.mapId === activeMapId)?.version });
       setEditingNote(false);
       notify("备注已保存");
     } catch (error) {
@@ -104,7 +108,7 @@ export function PlacePage() {
 
   async function uploadPhoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    const mapId = placeData.mapIds[0];
+    const mapId = activeMapId;
     event.target.value = "";
     if (!file || !mapId) return;
     setPhotoUploading(true);
@@ -144,6 +148,7 @@ export function PlacePage() {
         </div>
       </header>
 
+      <label className="context-selector">主题上下文 <select value={activeMapId || ""} onChange={event => { setChosenMapId(event.target.value || undefined); navigate(`/places/${placeData.id}`); }}><option value="">地点事实 · 请选择主题后编辑共享内容</option>{placeMaps.map(map => <option key={map.id} value={map.id}>{map.title}</option>)}</select></label>
       <div className="place-detail-layout">
         <main className="place-main-column">
           <section className="place-hero-card">
@@ -221,7 +226,8 @@ export function PlacePage() {
                   key={value}
                   type="button"
                   className={place.preference === value ? "active" : ""}
-                  onClick={() => { void setPreference(place.id, value, place.mapIds[0]).catch((error) => notify(error instanceof Error ? error.message : "状态保存失败")); }}
+                  disabled={!activeMapId}
+                  onClick={() => { void setPreference(place.id, value, activeMapId).catch((error) => notify(error instanceof Error ? error.message : "状态保存失败")); }}
                 >
                   {value === "want" && <Heart size={15} />}
                   {value === "planned" && <CalendarPlus size={15} />}
@@ -270,7 +276,7 @@ export function PlacePage() {
           </form>
         </Modal>
       )}
-      {addingVisit && <VisitDialog placeName={placeData.name} visits={placeVisits} onClose={() => setAddingVisit(false)} onReuse={() => setAddingVisit(false)} onSave={async (draft) => { await recordVisit(placeData.id, { mapId: placeData.mapIds[0], ...draft }); setAddingVisit(false); notify("到访已保存，可继续补照片和记录"); }} />}
+      {addingVisit && <VisitDialog sharedCompletion={Boolean(activeMapId)} placeName={placeData.name} visits={placeVisits} onClose={() => setAddingVisit(false)} onReuse={() => setAddingVisit(false)} onSave={async (draft) => { await recordVisit(placeData.id, { mapId: activeMapId, ...draft }); setAddingVisit(false); notify("到访已保存，可继续补照片和记录"); }} />}
       {toast && <Toast>{toast}</Toast>}
     </div>
   );

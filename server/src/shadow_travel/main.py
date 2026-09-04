@@ -17,9 +17,12 @@ from shadow_travel.api import (
     assistant,
     auth,
     browser,
+    capture,
     collaboration,
+    experience,
     machine,
     media,
+    planning,
     travel,
     trips,
 )
@@ -155,6 +158,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(browser.router)
     app.include_router(travel.router)
     app.include_router(trips.router)
+    app.include_router(planning.router)
+    app.include_router(capture.router)
+    app.include_router(experience.router)
     app.include_router(advanced.router)
     app.include_router(advanced.public_router)
     app.include_router(collaboration.router)

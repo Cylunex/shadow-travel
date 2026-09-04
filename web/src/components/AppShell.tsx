@@ -5,9 +5,9 @@ import { NavLink, useLocation } from "react-router-dom";
 import { CurrentUser } from "../api";
 
 const navigation = [
-  { to: "/", label: "地图", icon: Compass, exact: true },
-  { to: "/maps", label: "主题", icon: MapPinned },
-  { to: "/visits", label: "记录", icon: Clock3 }
+  { to: "/", label: "地点", icon: Compass, exact: true },
+  { to: "/trips", label: "旅程", icon: MapPinned },
+  { to: "/memories", label: "回忆", icon: Clock3 }
 ];
 
 export function AppShell({

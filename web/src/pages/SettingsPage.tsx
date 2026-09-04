@@ -2,6 +2,8 @@ import { Globe2, Image, LogOut, Map, ShieldCheck, Smartphone } from "lucide-reac
 
 import { CurrentUser, logout } from "../api";
 import { useTravel } from "../state/TravelContext";
+import { OfflinePanel } from "../features/OfflinePanel";
+import { pendingVisits } from "../offline";
 
 export function SettingsPage({ user, demo }: { user: CurrentUser; demo: boolean }) {
   const { capabilities } = useTravel();
@@ -13,9 +15,10 @@ export function SettingsPage({ user, demo }: { user: CurrentUser; demo: boolean 
 
       <div className="settings-layout">
         <main className="settings-main">
+          <OfflinePanel />
           <section className="settings-section account-section">
             <div className="settings-profile"><span>{user.display_name.slice(0, 1)}</span><div><strong>{user.display_name}</strong><small>{user.email || user.username}</small></div>{demo && <em>本地演示会话</em>}</div>
-            {!demo && <button className="secondary-button" type="button" onClick={() => { void logout(); }}><LogOut size={16} /> 退出登录</button>}
+            {!demo && <button className="secondary-button" type="button" onClick={() => { void pendingVisits().then(items => { if (!items.length || window.confirm(`还有 ${items.length} 条未同步记录。退出后仍保留在此设备，只有原账号能同步。继续退出？`)) { localStorage.removeItem("shadow-travel-offline-enabled"); void logout(); } }); }}><LogOut size={16} /> 退出登录</button>}
           </section>
 
           <section className="settings-section">

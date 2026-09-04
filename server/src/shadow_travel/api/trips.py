@@ -6,6 +6,7 @@ import re
 import uuid
 from datetime import UTC, date, datetime
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
@@ -42,6 +43,12 @@ class TripCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_trip(self) -> TripCreate:
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError:
+            raise ValueError("invalid timezone") from None
+        if not self.title.strip():
+            raise ValueError("empty title")
         if not CLIENT_ID_PATTERN.fullmatch(self.client_record_id):
             raise ValueError("client_record_id contains unsupported characters")
         if self.start_date and self.end_date and self.start_date > self.end_date:
@@ -56,6 +63,22 @@ class TripUpdate(BaseModel):
     end_date: date | None = None
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     status: Literal["planned", "active", "completed", "cancelled"] | None = None
+
+    @model_validator(mode="after")
+    def valid_values(self):
+        if self.timezone is not None:
+            try:
+                ZoneInfo(self.timezone)
+            except ZoneInfoNotFoundError:
+                raise ValueError("invalid timezone") from None
+        if self.title is not None and not self.title.strip():
+            raise ValueError("empty title")
+        if any(
+            name in self.model_fields_set and getattr(self, name) is None
+            for name in ("timezone", "title", "status")
+        ):
+            raise ValueError("required trip fields cannot be null")
+        return self
 
 
 class BundleVerifyRequest(BaseModel):
@@ -92,9 +115,7 @@ def create_trip(
     with _session(request) as session, session.begin():
         if body.source_map_id:
             _accessible_map(session, body.source_map_id, user.shadow_user_id)
-        replay = _mutation_replay(
-            session, user.shadow_user_id, "trip.create", key, request_hash
-        )
+        replay = _mutation_replay(session, user.shadow_user_id, "trip.create", key, request_hash)
         if replay is not None:
             return {**replay, "replayed": True}
         existing = session.scalar(
@@ -145,7 +166,9 @@ def update_trip(
         replay = _mutation_replay(session, user.shadow_user_id, operation, key, request_hash)
         if replay is not None:
             return {**replay, "replayed": True}
-        trip = session.get(TravelTrip, trip_id)
+        trip = session.scalar(
+            select(TravelTrip).where(TravelTrip.trip_id == trip_id).with_for_update()
+        )
         if trip is None or trip.owner_user_id != user.shadow_user_id:
             raise HTTPException(status_code=404, detail={"code": "travel_trip_not_found"})
         if trip.version != body.expected_version:
@@ -233,27 +256,41 @@ def _build_bundle(
         )
     known_place_ids = {place.place_id for _, place in map_rows}
     missing_place_ids = {visit.place_id for visit in visits} - known_place_ids
-    for place in session.scalars(
-        select(TravelPlace).where(
-            TravelPlace.place_id.in_(missing_place_ids),
-            TravelPlace.owner_user_id == owner_user_id,
-        )
-    ).all() if missing_place_ids else []:
-        map_rows.append((_private_link(place), place))
-    records = {
-        item.visit_id: item
-        for item in session.scalars(
-            select(TravelVisitRecord).where(
-                TravelVisitRecord.visit_id.in_([visit.visit_id for visit in visits])
+    for place in (
+        session.scalars(
+            select(TravelPlace).where(
+                TravelPlace.place_id.in_(missing_place_ids),
+                TravelPlace.owner_user_id == owner_user_id,
             )
         ).all()
-    } if visits else {}
-    photos = session.scalars(
-        select(TravelPhoto)
-        .join(TravelVisitRecord, TravelVisitRecord.visit_record_id == TravelPhoto.visit_record_id)
-        .where(TravelVisitRecord.visit_id.in_([visit.visit_id for visit in visits]))
-        .order_by(TravelPhoto.created_at, TravelPhoto.photo_id)
-    ).all() if visits else []
+        if missing_place_ids
+        else []
+    ):
+        map_rows.append((_private_link(place), place))
+    records = (
+        {
+            item.visit_id: item
+            for item in session.scalars(
+                select(TravelVisitRecord).where(
+                    TravelVisitRecord.visit_id.in_([visit.visit_id for visit in visits])
+                )
+            ).all()
+        }
+        if visits
+        else {}
+    )
+    photos = (
+        session.scalars(
+            select(TravelPhoto)
+            .join(
+                TravelVisitRecord, TravelVisitRecord.visit_record_id == TravelPhoto.visit_record_id
+            )
+            .where(TravelVisitRecord.visit_id.in_([visit.visit_id for visit in visits]))
+            .order_by(TravelPhoto.created_at, TravelPhoto.photo_id)
+        ).all()
+        if visits
+        else []
+    )
     sections: dict[str, object] = {
         "trip": _trip_payload(trip),
         "places": [
@@ -309,9 +346,7 @@ def _build_bundle(
             }
             for photo in photos
         ],
-        "share_projection": [
-            _public_place(link, place) for link, place in map_rows
-        ],
+        "share_projection": [_public_place(link, place) for link, place in map_rows],
         "checklist": [
             {"id": "contract", "status": "passed"},
             {"id": "referential-integrity", "status": "passed"},
@@ -342,7 +377,12 @@ def verify_trip_bundle(bundle: dict[str, object]) -> dict[str, object]:
     if bundle.get("protocol") != "shadow.travel.trip-bundle.v1" or bundle.get("version") != 1:
         errors.append("unsupported_bundle_contract")
     required_sections = (
-        "trip", "places", "visits", "media_references", "share_projection", "checklist"
+        "trip",
+        "places",
+        "visits",
+        "media_references",
+        "share_projection",
+        "checklist",
     )
     integrity = bundle.get("integrity")
     hashes = integrity.get("section_hashes") if isinstance(integrity, dict) else None
@@ -399,9 +439,7 @@ def verify_trip_bundle(bundle: dict[str, object]) -> dict[str, object]:
             {
                 "name": "referential-integrity",
                 "category": "data",
-                "status": (
-                    "failed" if any("reference" in item for item in errors) else "passed"
-                ),
+                "status": ("failed" if any("reference" in item for item in errors) else "passed"),
             },
             {
                 "name": "no-embedded-media",

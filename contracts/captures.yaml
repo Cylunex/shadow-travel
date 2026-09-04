@@ -1,2 +1,8 @@
 version: 1
-captures: []
+captures:
+  - id: travel.place-draft
+    owner: travel
+    effect: draft
+    input: source-reference
+    output_resource: travel-capture
+    direct_domain_write: false

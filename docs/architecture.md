@@ -4,7 +4,11 @@
 
 Shadow Travel 采用“模块化单体后端 + 独立 SPA/PWA 前端 + PostgreSQL”的首期架构。部署时只有一个规范入口 `https://example.com/travel/`；其他域名仅在反向代理层返回 308，不承载应用、Cookie 或 OIDC callback。
 
-后端是权限和数据边界。浏览器只持有 Travel 自己的短会话 Cookie；地图密钥、Media 凭据、LLM 供应商密钥和 Agent registry 均不进入浏览器。首期不拆微服务，模块之间通过明确的领域接口隔离，以便将来单独扩展图片处理、导入任务或 Agent 执行器。
+后端是权限和数据边界。浏览器持有 Travel 自己的短会话 Cookie；高德 JS SDK 使用受来源限制的前端配置。
+高德服务端密钥、Asset 凭据、LLM 供应商密钥和 Agent registry 不进入浏览器。
+本轮继续模块化单体；新增 capture、planning、experience API 模块，保留旧路由兼容。
+PlanDocument 通过版本比较保存，确认后的 PlanVersion 不可变；Visit/VisitRecord 不由计划推断或代写。
+离线前端采用实例+账号隔离的 IndexedDB / Outbox 和 Travel 范围静态 Service Worker，详见 [实现验收清单](lifecycle-implementation.md)。
 
 ```mermaid
 flowchart LR
