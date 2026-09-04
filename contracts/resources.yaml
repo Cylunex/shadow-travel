@@ -8,3 +8,11 @@ resources:
     uri_template: shadow://travel/drafts/{draft_id}
     owner: travel
     resource_grant_required: true
+  - type: travel-trip
+    uri_template: shadow://travel/trips/{trip_id}
+    owner: travel
+    resource_grant_required: true
+  - type: travel-agent-review
+    uri_template: shadow://travel/reviews/{review_id}
+    owner: travel
+    resource_grant_required: true

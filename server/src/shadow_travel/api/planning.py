@@ -12,10 +12,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import Field
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 
-from shadow_travel.api.travel import _accessible_place, _place_payload, _visit_payload
+from shadow_travel.api.travel import _place_payload, _visit_payload
 from shadow_travel.api.trips import _audit, _session, _trip_payload
+from shadow_travel.application.plan_commands import save_plan_record
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.domain.plan_v2 import PlanDocument, StrictModel, check_plan, instant, upgrade
@@ -304,48 +305,7 @@ def save_plan(trip_id: str, body: SavePlan, request: Request, user: User):
                     "current": plan_payload(session, trip, user.shadow_user_id),
                 },
             )
-        existing = set(plan.document.get("candidates", [])) if plan else set()
-        if plan and plan.document.get("schema_version") == 2 and body.document.schema_version == 1:
-            raise HTTPException(409, detail={"code": "client_upgrade_required"})
-        # Stable station IDs cannot silently acquire a different identity across versions.
-        versions = session.scalars(
-            select(TravelPlanVersion).where(TravelPlanVersion.trip_id == trip_id)
-        ).all()
-        identities = {s["id"]: s["place_id"] for v in versions for s in v.document.get("stops", [])}
-        if any(s.id in identities and identities[s.id] != s.place_id for s in body.document.stops):
-            raise HTTPException(409, detail={"code": "stop_identity_changed"})
-        for place_id in set(body.document.candidates) - existing:
-            _accessible_place(session, place_id, user.shadow_user_id)
-        allowed_members = {
-            trip.owner_user_id,
-            *session.scalars(
-                select(TravelTripMember.user_id).where(TravelTripMember.trip_id == trip_id)
-            ).all(),
-        }
-        if any(
-            task.assignee and task.assignee not in allowed_members for task in body.document.tasks
-        ):
-            raise HTTPException(422, detail={"code": "invalid_task_assignee"})
-        document = body.document.model_dump(mode="json")
-        document["timezone"] = trip.timezone
-        if plan:
-            changed = session.execute(
-                update(TravelPlan)
-                .where(TravelPlan.trip_id == trip_id, TravelPlan.revision == body.base_revision)
-                .values(document=document, revision=body.base_revision + 1)
-            )
-            if changed.rowcount != 1:
-                raise HTTPException(409, detail={"code": "plan_revision_conflict"})
-        else:
-            # Lock parent as well so first creation has the same concurrency boundary.
-            session.execute(
-                select(TravelTrip).where(TravelTrip.trip_id == trip_id).with_for_update()
-            )
-            if session.get(TravelPlan, trip_id):
-                raise HTTPException(409, detail={"code": "plan_revision_conflict"})
-            session.add(TravelPlan(trip_id=trip_id, revision=1, document=document))
-        session.flush()
-        session.expire_all()
+        save_plan_record(session, trip, user.shadow_user_id, body.document, body.base_revision)
         _audit(request, session, user.shadow_user_id, "travel_plan.save", trip_id, None)
         return plan_payload(session, trip, user.shadow_user_id)
 

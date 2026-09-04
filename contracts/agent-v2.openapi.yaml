@@ -1,0 +1,1397 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Shadow Travel typed Agent API",
+    "version": "2.0.0",
+    "description": "Travel-only review; owner browser confirmation required."
+  },
+  "servers": [
+    {
+      "url": "https://travel.example.com"
+    }
+  ],
+  "paths": {
+    "/api/machine/v1/agent/v2/summary": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Summary",
+        "operationId": "get_agent_trip_summary",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/trips": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "List Trips",
+        "operationId": "list_agent_trips",
+        "parameters": [
+          {
+            "name": "grant_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Grant Id"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/trips/{trip_id}": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Get Trip",
+        "operationId": "get_agent_trip",
+        "parameters": [
+          {
+            "name": "trip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trip Id"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Grant Id"
+            }
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/trips/{trip_id}/reservations": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "List Reservations",
+        "operationId": "list_agent_reservations",
+        "parameters": [
+          {
+            "name": "trip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trip Id"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Grant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/trips/{trip_id}/readiness": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Readiness",
+        "operationId": "get_agent_trip_readiness",
+        "parameters": [
+          {
+            "name": "trip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trip Id"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Grant Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/proposals/check": {
+      "post": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Check Proposal",
+        "operationId": "check_agent_proposal",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/proposals": {
+      "post": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Create Proposal",
+        "operationId": "create_agent_proposal",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/reviews/{review_id}": {
+      "get": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Get Review",
+        "operationId": "get_agent_review",
+        "parameters": [
+          {
+            "name": "review_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Review Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/reservation-proposals": {
+      "post": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Propose Reservations",
+        "operationId": "propose_agent_reservations",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proposal"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    },
+    "/api/machine/v1/agent/v2/reviews/{review_id}/commit": {
+      "post": {
+        "tags": [
+          "agent-v2"
+        ],
+        "summary": "Machine Commit",
+        "operationId": "agent_review_commit_boundary",
+        "parameters": [
+          {
+            "name": "review_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Review Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Machine identity required"
+          },
+          "403": {
+            "description": "Scope, grant or confirmation denied"
+          },
+          "404": {
+            "description": "Resource not authorized or missing"
+          },
+          "409": {
+            "description": "Version or idempotency conflict"
+          }
+        },
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "Proposal": {
+        "properties": {
+          "grant_id": {
+            "type": "string",
+            "maxLength": 36,
+            "minLength": 1,
+            "title": "Grant Id"
+          },
+          "trip_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 36
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trip Id"
+          },
+          "expected_trip_version": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Trip Version"
+          },
+          "expected_plan_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Plan Revision"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "operations": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CreateTrip"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateTrip"
+                },
+                {
+                  "$ref": "#/components/schemas/AddStop"
+                },
+                {
+                  "$ref": "#/components/schemas/MoveStop"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveStop"
+                },
+                {
+                  "$ref": "#/components/schemas/UpsertReservation"
+                },
+                {
+                  "$ref": "#/components/schemas/RemoveReservation"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "ADD_STOP": "#/components/schemas/AddStop",
+                  "CREATE_TRIP": "#/components/schemas/CreateTrip",
+                  "MOVE_STOP": "#/components/schemas/MoveStop",
+                  "REMOVE_RESERVATION": "#/components/schemas/RemoveReservation",
+                  "REMOVE_STOP": "#/components/schemas/RemoveStop",
+                  "UPDATE_TRIP": "#/components/schemas/UpdateTrip",
+                  "UPSERT_RESERVATION": "#/components/schemas/UpsertReservation"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Operations"
+          },
+          "inferred": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Inferred"
+          },
+          "uncertainties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Uncertainties"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "grant_id",
+          "expected_trip_version",
+          "expected_plan_revision",
+          "summary",
+          "operations"
+        ],
+        "title": "Proposal"
+      },
+      "CreateTrip": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "CREATE_TRIP",
+            "title": "Op"
+          },
+          "trip": {
+            "$ref": "#/components/schemas/TripFields"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "trip"
+        ],
+        "title": "CreateTrip"
+      },
+      "TripFields": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date",
+            "title": "End Date"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "planned",
+              "active",
+              "completed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "default": "planned"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "start_date",
+          "end_date",
+          "timezone"
+        ],
+        "title": "TripFields"
+      },
+      "UpdateTrip": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "UPDATE_TRIP",
+            "title": "Op"
+          },
+          "trip": {
+            "$ref": "#/components/schemas/TripFields"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "trip"
+        ],
+        "title": "UpdateTrip"
+      },
+      "AddStop": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "ADD_STOP",
+            "title": "Op"
+          },
+          "stop": {
+            "$ref": "#/components/schemas/Stop"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "stop"
+        ],
+        "title": "AddStop"
+      },
+      "Stop": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "place_id": {
+            "type": "string",
+            "title": "Place Id"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Start",
+            "default": "09:00"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "maximum": 1440.0,
+            "minimum": 1.0,
+            "title": "Duration Minutes",
+            "default": 60
+          },
+          "travel_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2880.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Travel Minutes"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "walking",
+              "transit",
+              "driving",
+              "bicycling"
+            ],
+            "title": "Mode",
+            "default": "walking"
+          },
+          "anchor": {
+            "type": "boolean",
+            "title": "Anchor",
+            "default": false
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Note",
+            "default": ""
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "fold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "enum": [
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fold"
+          },
+          "reservation_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Reservation Refs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "place_id",
+          "day"
+        ],
+        "title": "Stop"
+      },
+      "MoveStop": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "MOVE_STOP",
+            "title": "Op"
+          },
+          "stop_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Stop Id"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Start"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone"
+          },
+          "fold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "enum": [
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fold"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "stop_id",
+          "day",
+          "start",
+          "timezone"
+        ],
+        "title": "MoveStop"
+      },
+      "RemoveStop": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "REMOVE_STOP",
+            "title": "Op"
+          },
+          "stop_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Stop Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "stop_id"
+        ],
+        "title": "RemoveStop"
+      },
+      "UpsertReservation": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "UPSERT_RESERVATION",
+            "title": "Op"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/Reservation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "reservation"
+        ],
+        "title": "UpsertReservation"
+      },
+      "Reservation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day"
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+            "title": "Time",
+            "default": "09:00"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "stay",
+              "transport",
+              "ticket",
+              "other"
+            ],
+            "title": "Kind",
+            "default": "other"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Note",
+            "default": ""
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "pattern": "^shadow://(?:asset|archive)/"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "fold": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "enum": [
+                  0,
+                  1
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fold"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "day"
+        ],
+        "title": "Reservation"
+      },
+      "RemoveReservation": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "REMOVE_RESERVATION",
+            "title": "Op"
+          },
+          "reservation_id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Reservation Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "reservation_id"
+        ],
+        "title": "RemoveReservation"
+      },
+      "ReviewView": {
+        "properties": {
+          "protocol": {
+            "type": "string",
+            "const": "shadow.travel.review.v2",
+            "title": "Protocol"
+          },
+          "review_id": {
+            "type": "string",
+            "title": "Review Id"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "agent_id": {
+            "type": "string",
+            "title": "Agent Id"
+          },
+          "trip_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trip Id"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "committed",
+              "rejected",
+              "conflicted",
+              "expired"
+            ],
+            "title": "State"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "changeset_hash": {
+            "type": "string",
+            "title": "Changeset Hash"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "proposal": {
+            "$ref": "#/components/schemas/Proposal"
+          },
+          "preview": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Preview"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "confirmation_mode": {
+            "type": "string",
+            "const": "travel_browser_session",
+            "title": "Confirmation Mode"
+          },
+          "direct_domain_write": {
+            "type": "boolean",
+            "const": false,
+            "title": "Direct Domain Write"
+          },
+          "replayed": {
+            "type": "boolean",
+            "title": "Replayed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "protocol",
+          "review_id",
+          "reference",
+          "agent_id",
+          "trip_id",
+          "state",
+          "revision",
+          "changeset_hash",
+          "summary",
+          "proposal",
+          "preview",
+          "result",
+          "created_at",
+          "expires_at",
+          "confirmation_mode",
+          "direct_domain_write"
+        ],
+        "title": "ReviewView"
+      }
+    },
+    "securitySchemes": {
+      "AgentBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

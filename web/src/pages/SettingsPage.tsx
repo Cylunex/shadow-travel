@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { CurrentUser, logout } from "../api";
+import { Link } from "react-router-dom";
 import { useTravel } from "../state/TravelContext";
 import { OfflinePanel } from "../features/OfflinePanel";
 import { pendingVisits } from "../offline";
@@ -39,6 +40,7 @@ export function SettingsPage({
       <div className="settings-layout">
         <main className="settings-main">
           <OfflinePanel />
+          <section className="settings-section"><h2>Agent 授权与审核</h2><p>控制助手可以读取哪些旅程，逐次确认计划变更。</p><Link className="secondary-button" to="/agent">管理授权与提案</Link></section>
           <section className="settings-section account-section">
             <div className="settings-profile">
               <span>{user.display_name.slice(0, 1)}</span>

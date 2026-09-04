@@ -90,7 +90,20 @@ def test_shadow_plugin_contract_matches_travel_machine_routes(settings_factory) 
         "travel.maps.read",
         "travel.drafts.create",
         "travel.drafts.review",
+        "travel.trips.read",
+        "travel.trips.propose",
+        "travel.reservations.read",
+        "travel.reservations.propose",
     }
+    v2 = yaml.safe_load((ROOT / "contracts" / "agent-v2.openapi.yaml").read_text("utf-8"))
+    assert {
+        (path, method.upper()) for path, item in v2["paths"].items() for method in item
+    } <= actual_routes
+    operation_ids = {
+        operation["operationId"] for item in v2["paths"].values() for operation in item.values()
+    }
+    assert "create_agent_proposal" in operation_ids
+    assert "get_agent_trip" in operation_ids
 
 
 def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
@@ -98,9 +111,7 @@ def test_shadow_plugin_tools_execute_against_the_declared_machine_api(
 ) -> None:
     token = "travel-plugin-test-token-that-is-long-enough"
     registry, secrets_dir = _agent_registry(tmp_path, token)
-    app = create_app(
-        settings_factory(agent_registry_path=registry, agent_secrets_dir=secrets_dir)
-    )
+    app = create_app(settings_factory(agent_registry_path=registry, agent_secrets_dir=secrets_dir))
     Base.metadata.create_all(app.state.database.engine)
     with app.state.database.session_factory() as session, session.begin():
         session.add(
@@ -181,9 +192,7 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(
 ) -> None:
     token = "travel-review-test-token-that-is-long-enough"
     registry, secrets_dir = _agent_registry(tmp_path, token)
-    app = create_app(
-        settings_factory(agent_registry_path=registry, agent_secrets_dir=secrets_dir)
-    )
+    app = create_app(settings_factory(agent_registry_path=registry, agent_secrets_dir=secrets_dir))
     Base.metadata.create_all(app.state.database.engine)
     with app.state.database.session_factory() as session, session.begin():
         session.add(
@@ -267,9 +276,7 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(
 
         listed = client.get("/api/machine/v1/agent/nexus/reviews", headers=headers)
         assert listed.status_code == 200, listed.text
-        assert [item["review_id"] for item in listed.json()["items"]] == [
-            review["review_id"]
-        ]
+        assert [item["review_id"] for item in listed.json()["items"]] == [review["review_id"]]
 
         committed = client.post(
             f"/api/machine/v1/agent/nexus/reviews/{review['review_id']}/commit",

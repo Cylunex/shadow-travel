@@ -13,6 +13,11 @@ def test_vnext_upgrade_downgrade_preserves_legacy_tables(tmp_path, monkeypatch):
     engine = create_engine(url)
     tables = inspect(engine).get_table_names()
     assert "travel_runs" in tables and "travel_stop_outcomes" in tables
+    assert {
+        "travel_agent_resource_grants",
+        "travel_agent_reviews",
+        "travel_agent_review_revisions",
+    } <= set(tables)
     assert next(
         c for c in inspect(engine).get_columns("travel_places") if c["name"] == "longitude"
     )["nullable"]

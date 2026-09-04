@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from shadow_travel import __version__
 from shadow_travel.api import (
     advanced,
+    agent_v2,
     assistant,
     auth,
     browser,
@@ -171,6 +172,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(media.router)
     app.include_router(assistant.router)
     app.include_router(machine.router)
+    app.include_router(agent_v2.router)
+    app.include_router(agent_v2.browser_router)
     return app
 
 

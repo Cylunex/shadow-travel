@@ -18,6 +18,7 @@ import { TripsPage } from "./features/TripsPage";
 import { TripPage } from "./features/TripPage";
 import { CapturePage } from "./features/CapturePage";
 import { MemoriesPage } from "./features/MemoriesPage";
+import { AgentPage } from "./features/AgentPage";
 import { setLocalReadMode } from "./offline";
 
 type SessionState =
@@ -58,6 +59,7 @@ export function App() {
     <Route path="/" element={<GlobalMapPage />} />
     <Route path="/maps" element={<MapsPage />} />
     <Route path="/trips" element={<TripsPage />} />
+    <Route path="/agent" element={<AgentPage demo={session.demo} />} />
     <Route path="/trips/:tripId" element={<TripPage />} />
     <Route path="/capture" element={<CapturePage />} />
     <Route path="/memories" element={<MemoriesPage />} />

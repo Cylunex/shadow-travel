@@ -22,8 +22,6 @@ from shadow_travel.infrastructure.models import (
     TravelPlace,
     TravelRoute,
     TravelRouteStop,
-    TravelTrip,
-    TravelVisit,
 )
 from shadow_travel.integrations.agent import (
     AgentAccess,
@@ -163,7 +161,6 @@ def agent_summary(
             )
         ).all()
         map_ids = [row.map_id for row in grants]
-        owner_ids = list({row.granted_by for row in grants})
         place_count = 0
         if map_ids:
             place_count = int(
@@ -174,23 +171,9 @@ def agent_summary(
                 )
                 or 0
             )
-        trip_count = int(
-            session.scalar(
-                select(func.count(TravelTrip.trip_id)).where(
-                    TravelTrip.owner_user_id.in_(owner_ids)
-                )
-            )
-            or 0
-        ) if owner_ids else 0
-        visit_count = int(
-            session.scalar(
-                select(func.count(TravelVisit.visit_id)).where(
-                    TravelVisit.shadow_user_id.in_(owner_ids),
-                    TravelVisit.source_map_id.in_(map_ids),
-                )
-            )
-            or 0
-        ) if owner_ids and map_ids else 0
+        # Map grants do not authorize private Trip or Visit metadata.
+        trip_count = 0
+        visit_count = 0
         observed_at = datetime.now(UTC).isoformat()
         return {
             "protocol": "shadow.domain-summary.v1",

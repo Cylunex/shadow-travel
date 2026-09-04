@@ -6,3 +6,15 @@ confirmations:
   - capability: travel.drafts.create
     mode: notify
     receipt_required: false
+  - capability: travel.trips.read
+    mode: none
+    receipt_required: false
+  - capability: travel.trips.propose
+    mode: notify
+    receipt_required: false
+  - capability: travel.reservations.read
+    mode: none
+    receipt_required: false
+  - capability: travel.reservations.propose
+    mode: notify
+    receipt_required: false

@@ -24,6 +24,7 @@ Shadow Travel 是个人地点、到访和旅行记忆中心。它既管理去过
 - 旅途中模式：下一站、外部导航、私密到访、7 天有效的本地旅行副本；
 - 私密片段与旅行故事、已有照片引用、GPX 预览/导入/导出；
 - 就近排序草案、时间冲突检查与 ICS 导出，不自动生成到访或正式计划。
+- Agent 旅程授权、类型化变更提案和逐项差异审核；由真实登录用户确认后保存计划草稿。
 
 地图界面始终使用高德日间底图。底图下载、原生后台轨迹、票据 OCR 和跨应用资料授权
 不包含在当前本地副本能力内，界面按真实可用性展示。
@@ -51,3 +52,5 @@ npm run dev
 - [离线写入、隐私与 Trip Bundle 恢复](docs/offline-portability.md)
 - [优化方案](docs/optimization-plan-2026-09.md)
 - [本轮实现与验收边界](docs/lifecycle-implementation.md)
+- [Agent v2 调研、改造与集成边界](docs/agent-v2-plan-2026-09-04.md)
+- [Agent Plugin 接入](docs/agent-plugin.md)

@@ -4,10 +4,14 @@ package_version: 0.1.0
 skills:
   - id: travel-planning
     path: skills/travel-planning/SKILL.md
-    summary: 读取已授权旅行地图，并为用户创建可审核的路线、地点清单或地图备注草案
+    summary: 摘要优先读取授权地图与旅程，提出待真实用户确认的旅程、站次和预订变更
     capabilities:
       - travel.maps.read
       - travel.drafts.create
+      - travel.trips.read
+      - travel.trips.propose
+      - travel.reservations.read
+      - travel.reservations.propose
     invocation:
       model: true
       user: true
@@ -133,6 +137,153 @@ capabilities:
     data_classification: personal
     risk_level: L2
     confirmation: policy
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true
+  - id: travel.trips.read
+    summary: 读取已明确授权的旅程与出发检查；不包含私人到访或照片
+    audience: travel
+    scopes: [travel.trips.read]
+    tools:
+      - name: travel.trips.summary
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: get_agent_trip_summary
+        exposure: hidden
+        result_mode: summary
+        max_result_bytes: 524288
+        max_model_chars: 1600
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: travel.trips.list
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: list_agent_trips
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: travel.trips.get
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: get_agent_trip
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+      - name: travel.trip.readiness.get
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: get_agent_trip_readiness
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: personal
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: travel.trips.propose
+    summary: 提出待 Travel 登录用户逐次确认的 Trip 创建、更新与局部站次操作
+    audience: travel
+    scopes: [travel.trips.read, travel.trips.propose]
+    tools:
+      - name: travel.proposals.check
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: check_agent_proposal
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: travel.proposals.create
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: create_agent_proposal
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+      - name: travel.reviews.get
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: get_agent_review
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: draft
+    data_classification: personal
+    risk_level: L1
+    confirmation: notify
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: true
+  - id: travel.reservations.read
+    summary: 读取授权旅程的最小预订摘要，不返回附件地址
+    audience: travel
+    scopes: [travel.trips.read, travel.reservations.read]
+    tools:
+      - name: travel.reservations.list
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: list_agent_reservations
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: true
+        retry_policy: idempotent
+    effect: read
+    data_classification: personal
+    risk_level: L0
+    confirmation: none
+    reversible: true
+    resource_grant_required: true
+    idempotency_required: false
+  - id: travel.reservations.propose
+    summary: 为已有旅程提出预订摘要变更，不付款、不出票、不保存未验证的跨服务引用
+    audience: travel
+    scopes: [travel.trips.read, travel.trips.propose, travel.reservations.read, travel.reservations.propose]
+    tools:
+      - name: travel.reservations.propose
+        transport: http
+        contract_ref: contracts/agent-v2.openapi.yaml
+        operation_id: propose_agent_reservations
+        exposure: on-demand
+        result_mode: full
+        max_result_bytes: 524288
+        max_model_chars: 16000
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
+    effect: draft
+    data_classification: personal
+    risk_level: L1
+    confirmation: notify
     reversible: true
     resource_grant_required: true
     idempotency_required: true

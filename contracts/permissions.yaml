@@ -8,3 +8,19 @@ permissions:
     audience: travel
     scopes: [travel.drafts.create]
     resource_grant: travel-map.drafts
+  - capability: travel.trips.read
+    audience: travel
+    scopes: [travel.trips.read]
+    resource_grant: travel-resource.read
+  - capability: travel.trips.propose
+    audience: travel
+    scopes: [travel.trips.read, travel.trips.propose]
+    resource_grant: travel-resource.propose
+  - capability: travel.reservations.read
+    audience: travel
+    scopes: [travel.trips.read, travel.reservations.read]
+    resource_grant: travel-resource.reservations
+  - capability: travel.reservations.propose
+    audience: travel
+    scopes: [travel.trips.read, travel.trips.propose, travel.reservations.read, travel.reservations.propose]
+    resource_grant: travel-resource.reservations

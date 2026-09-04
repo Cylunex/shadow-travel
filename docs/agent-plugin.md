@@ -1,17 +1,38 @@
 # Travel Agent Plugin
 
-Travel 是独立领域应用，拥有地图、地点、路线、授权和草案数据。仓库中的 Shadow Plugin 只
-声明它对 Agent Runtime 暴露的远程能力，不包含 DSH、Cordis 或其他 Harness 依赖。
+Travel 拥有地图、地点、Trip、计划、授权和提案数据。Shadow Plugin 声明远程 HTTP 能力，
+不包含新的 Harness 或 Agent 框架依赖。只有明确授权的数据才可被机器读取。
 
-首期能力只有：
+## 两条兼容路径
 
-- 读取当前 Agent 通过 scope 和地图级 grant 双重授权的最小地图上下文；
-- 创建 `pending` 状态的可撤销草案，正式应用仍由 Travel 用户会话完成。
+- 旧地图：travel.maps.read / travel.drafts.create，保留 Nexus v1 Host 审核兼容；
+- v2 旅程：travel.trips.read / travel.trips.propose，预订另需 travel.reservations.read/propose。
+  机器只读与创建类型化提案；真实 Owner 在 Travel 浏览器审核页确认，保存 Trip + Plan Draft。
 
-Platform 校验 `shadow-plugin.yaml`、`agent/manifest.yaml` 和 OpenAPI 后，把本项目配置编译进
-目标 Profile 的通用 DSH Bundle。运行时使用 Travel 专属 Bearer 直接访问机器 API，Platform
-不转发地图数据。真实地址、Token、用户数据和生产 Profile 配置均不进入本仓库。
+v2 不接受模型传 Owner，不从地图 grant 自动授权所有 Trip，不自动创建 Visit、Approved
+PlanVersion 或付款。机器 commit 返回 owner_browser_confirmation_required。
+旧 Host 的写 scope 不能成为新 Trip 的提交途径。
 
-当前接口不返回统一摘要或长期资源引用，因此三个 Tool 都使用有严格响应与模型预算的
-`full` 模式。以后若 API 增加 `summary` 或 `shadow://` 引用，应先更新领域 OpenAPI，再收紧
-Manifest 的结果模式。
+## 本地接入顺序
+
+1. 迁移数据库至 head（新增 0009 grants/reviews/revisions；不升级旧 grant 权限）。
+2. 按需在现有机器身份注册表开启 v2 scopes；凭据和真实配置不进入仓库。
+3. 导入 shadow-plugin.yaml / agent/manifest.yaml。v1 与 v2 分别使用
+   contracts/agent.openapi.yaml 和 contracts/agent-v2.openapi.yaml。
+4. Owner 打开 /agent，填写管理员提供的 Agent ID 并授权。
+   单 Trip 为默认选择；需要创建新 Trip 时明确授予 workspace。
+5. Runtime 按 Skill 摘要先行、检查、创建提案；Idempotency-Key 由 Host 提供。
+6. 返回 /agent?review=ID；由用户在 Travel 登录会话中查看差异、修订、确认。
+7. travel.reviews.get 回读结果，再按授权读取 Trip/Plan 版本。
+
+尚未修改 Nexus v2 卡片、Platform Receipt 或 Runtime Profile，不能声称旧 Nexus 页面已能
+提交新 Trip。跨服务 Ledger/Archive 引用未核验时拒绝，不把 Agent Token 透传给下游。
+
+## 合同与验证
+
+v2 OpenAPI 的请求 schema 从 FastAPI/Pydantic 生成。生成器 scripts/agent_v2_contract.py 只向
+stdout 输出，不读取生产配置。协议变化后同步合同、Manifest、Skill 和 Evals；插件合同测试
+核对工具 operation_id 与真实路由。
+
+详细调研、领域边界、操作词汇和后续依赖见
+[Agent v2 改造方案](agent-v2-plan-2026-09-04.md)。

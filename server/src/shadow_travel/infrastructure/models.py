@@ -648,6 +648,61 @@ class TravelAgentMapGrant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class TravelAgentResourceGrant(Base):
+    __tablename__ = "travel_agent_resource_grants"
+    grant_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), nullable=False
+    )
+    resource_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    trip_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="CASCADE")
+    )
+    allow_read: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    allow_propose: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_reservations: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TravelAgentReview(Base):
+    __tablename__ = "travel_agent_reviews"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "idempotency_key", name="uq_agent_review_key"),
+        Index("ix_agent_review_owner_state", "owner_user_id", "state", "created_at"),
+    )
+    review_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), nullable=False
+    )
+    grant_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_agent_resource_grants.grant_id"), nullable=False
+    )
+    trip_id: Mapped[str | None] = mapped_column(String(36))
+    state: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TravelAgentReviewRevision(Base):
+    __tablename__ = "travel_agent_review_revisions"
+    review_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_agent_reviews.review_id", ondelete="CASCADE"), primary_key=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proposal: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changeset_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    preview: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class TravelAgentDraft(Base):
     __tablename__ = "travel_agent_drafts"
     __table_args__ = (Index("ix_travel_agent_drafts_map_status", "map_id", "status", "created_at"),)

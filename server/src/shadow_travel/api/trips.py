@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from shadow_travel.api.travel import _accessible_map
+from shadow_travel.application.trip_commands import create_trip_record, update_trip_record
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.infrastructure.models import (
@@ -132,19 +133,11 @@ def create_trip(
                 session, user.shadow_user_id, "trip.create", key, request_hash, response
             )
             return response
-        trip = TravelTrip(
-            owner_user_id=user.shadow_user_id,
-            source_map_id=body.source_map_id,
-            client_record_id=body.client_record_id,
-            client_payload_hash=request_hash,
-            title=body.title.strip(),
-            start_date=body.start_date,
-            end_date=body.end_date,
-            timezone=body.timezone.strip(),
-            status=body.status,
+        trip = create_trip_record(
+            session, user.shadow_user_id,
+            {**body.model_dump(exclude={"client_record_id"}), "title": body.title.strip()},
+            body.client_record_id, request_hash,
         )
-        session.add(trip)
-        session.flush()
         response = {**_trip_payload(trip), "replayed": False}
         _store_mutation(session, user.shadow_user_id, "trip.create", key, request_hash, response)
         _audit(request, session, user.shadow_user_id, "travel_trip.create", trip.trip_id, key)
@@ -175,16 +168,7 @@ def update_trip(
             _conflict("travel_trip_version_conflict", _trip_payload(trip))
         values = body.model_dump(exclude_unset=True)
         values.pop("expected_version", None)
-        start = values.get("start_date", trip.start_date)
-        end = values.get("end_date", trip.end_date)
-        if start and end and start > end:
-            raise HTTPException(status_code=422, detail={"code": "invalid_trip_period"})
-        for name, value in values.items():
-            if isinstance(value, str):
-                value = value.strip()
-            setattr(trip, name, value)
-        trip.version += 1
-        session.flush()
+        update_trip_record(session, trip, values, body.expected_version)
         response = {**_trip_payload(trip), "replayed": False}
         _store_mutation(session, user.shadow_user_id, operation, key, request_hash, response)
         _audit(request, session, user.shadow_user_id, "travel_trip.update", trip.trip_id, key)
@@ -583,13 +567,15 @@ def _audit(
     idempotency_key: str | None,
     *,
     details: dict[str, object] | None = None,
+    actor_type: str = "user",
+    resource_type: str = "travel_trip",
 ) -> None:
     session.add(
         AuditEvent(
-            actor_type="user",
+            actor_type=actor_type,
             actor_id=actor_id,
             action=action,
-            resource_type="travel_trip",
+            resource_type=resource_type,
             resource_id=resource_id,
             request_id=request.state.request_id,
             idempotency_key=idempotency_key,

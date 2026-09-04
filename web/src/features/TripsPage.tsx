@@ -78,6 +78,7 @@ export function TripsPage() {
           </button>
         ))}
         <Link to="/capture">地点收集箱</Link>
+        <Link to="/agent">Agent 审核</Link>
       </div>
       {error && (
         <p className="map-search-error" role="alert">
