@@ -1,7 +1,7 @@
 import { LocateFixed, Minus, Navigation, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { Place } from "../types";
+import { Place, LocatedPlace } from "../types";
 import { ClientMapProvider } from "./provider";
 import { MapCoordinate, loadAMap } from "./amapRuntime";
 
@@ -16,10 +16,10 @@ export function AMapSurface({
   provider,
   onMapClick
 }: {
-  places: Place[];
+  places: LocatedPlace[];
   selectedId?: string;
   onSelect?: (place: Place) => void;
-  routePlaces: Place[];
+  routePlaces: LocatedPlace[];
   routePath?: MapCoordinate[];
   city: string;
   compact: boolean;
@@ -187,7 +187,7 @@ function locate(map: AMap.Map | null) {
   );
 }
 
-function initialCenter(places: Place[]): [number, number] {
+function initialCenter(places: LocatedPlace[]): [number, number] {
   if (!places.length) return [116.397428, 39.90923];
   const total = places.reduce((value, place) => ({ longitude: value.longitude + place.coordinate.longitude, latitude: value.latitude + place.coordinate.latitude }), { longitude: 0, latitude: 0 });
   return [total.longitude / places.length, total.latitude / places.length];

@@ -243,7 +243,7 @@ function numeric(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-export async function coordinateForAMap(point: Place["coordinate"]): Promise<Place["coordinate"]> {
+export async function coordinateForAMap(point: NonNullable<Place["coordinate"]>): Promise<NonNullable<Place["coordinate"]>> {
   if (point.reference !== "WGS84") return point;
   const api = await loadAMap();
   return new Promise((resolve, reject) => {
@@ -262,5 +262,6 @@ function title(value: string): string {
 }
 
 export function placeToCoordinate(place: Place): MapCoordinate {
+  if (!place.coordinate) throw new Error("地点坐标需要联网核验");
   return { longitude: place.coordinate.longitude, latitude: place.coordinate.latitude };
 }

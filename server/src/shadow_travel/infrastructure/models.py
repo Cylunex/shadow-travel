@@ -290,6 +290,37 @@ class TravelMapInvitation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class TravelRun(Base):
+    __tablename__ = "travel_runs"
+    run_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_string)
+    trip_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_trips.trip_id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    bindings: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class TravelStopOutcome(Base):
+    __tablename__ = "travel_stop_outcomes"
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("travel_runs.run_id", ondelete="CASCADE"), primary_key=True
+    )
+    stop_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    member_id: Mapped[str] = mapped_column(
+        ForeignKey("shadow_users.shadow_user_id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(String(24), default="pending", nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    visit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("travel_visits.visit_id", ondelete="SET NULL")
+    )
+    # User-supplied event times only, never inferred from row creation time.
+    actual_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class TravelPlace(Base):
     __tablename__ = "travel_places"
     __table_args__ = (
@@ -312,8 +343,8 @@ class TravelPlace(Base):
     district: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     city: Mapped[str] = mapped_column(String(100), nullable=False)
     country_code: Mapped[str] = mapped_column(String(2), nullable=False, default="CN")
-    longitude: Mapped[float] = mapped_column(Float, nullable=False)
-    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float | None] = mapped_column(Float)
+    latitude: Mapped[float | None] = mapped_column(Float)
     coordinate_reference: Mapped[str] = mapped_column(String(16), nullable=False, default="GCJ02")
     provider: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
     provider_place_id: Mapped[str | None] = mapped_column(String(255))

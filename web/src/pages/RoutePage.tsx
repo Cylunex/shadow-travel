@@ -17,7 +17,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { MapSurface } from "../components/MapSurface";
 import { EmptyState, Toast } from "../components/Shared";
-import { AMapRouteResult, placeToCoordinate, planAMapRoute } from "../map/amapRuntime";
+import { routeForPlaces, type VerifiedRoute } from "../map/routeService";
 import { mapProviderForCountry } from "../map/provider";
 import { useTravel } from "../state/TravelContext";
 
@@ -37,21 +37,22 @@ export function RoutePage() {
   const route = routes.find((item) => item.id === routeId);
   const [mode, setMode] = useState<RouteMode>(route?.mode ?? "walking");
   const [toast, setToast] = useState<string>();
-  const [routeResult, setRouteResult] = useState<AMapRouteResult>();
+  const [routeResult, setRouteResult] = useState<VerifiedRoute>();
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string>();
   const [draggedIndex, setDraggedIndex] = useState<number>();
-  const mapProvider = mapProviderForCountry();
   const map = route ? mapById(route.mapId) : undefined;
   const stops = useMemo(() => route ? route.stopIds.map((id) => placeById(id)).filter(Boolean) as NonNullable<ReturnType<typeof placeById>>[] : [], [placeById, route]);
   const stopSignature = stops.map((place) => place.id).join(",");
+  const mapProvider = mapProviderForCountry(stops[0]?.countryCode || (stops[0]?.provider === "google" ? "ZZ" : "CN"));
 
   useEffect(() => {
     if (!route || stops.length < 2) return;
     let active = true;
     setRouteLoading(true);
     setRouteError(undefined);
-    planAMapRoute(stops.map(placeToCoordinate), mode, map?.city).then((result) => {
+    setRouteResult(undefined);
+    routeForPlaces(stops, mode, map?.city).then((result) => {
       if (active) setRouteResult(result);
     }).catch((error) => {
       if (active) {
@@ -69,8 +70,8 @@ export function RoutePage() {
   }
   const wholeRouteUrl = mapProvider.externalRouteUrl(stops, mode);
   const externalMapUrl = wholeRouteUrl || mapProvider.externalRouteUrl(stops.slice(0, 2), mode);
-  const distance = routeResult ? formatDistance(routeResult.distanceMeters) : "距离待核验";
-  const duration = routeResult ? formatDuration(routeResult.durationSeconds) : "预计时间未知";
+  const distance = routeResult?.distanceMeters != null ? formatDistance(routeResult.distanceMeters) : "距离待核验";
+  const duration = routeResult?.durationSeconds != null ? formatDuration(routeResult.durationSeconds) : "预计时间未知";
 
   return (
     <div className="route-page">
@@ -84,7 +85,7 @@ export function RoutePage() {
           <div className="route-summary">
             <span><RouteIcon size={20} /></span>
             <div><strong>{distance}</strong><small>{duration}</small></div>
-            <div><strong>{stops.length} 站</strong><small>{routeLoading ? "正在规划" : routeError ? "直线预览" : "高德路线"}</small></div>
+            <div><strong>{stops.length} 站</strong><small>{routeLoading ? "正在规划" : routeError ? "路线未核验" : mapProvider.label}</small></div>
           </div>
           <div className="mode-switch">
             {modes.map(({ value, label, icon: Icon }) => (
@@ -125,12 +126,12 @@ export function RoutePage() {
             ))}
           </div>
           <div className="route-actions">
-            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">{wholeRouteUrl ? `在${mapProvider.label}中打开` : "高德打开首段（非整条路线）"} <ExternalLink size={16} /></a> : <span className="lifecycle-hint">当前坐标或路线不支持直接跳转，请逐个地点打开导航。</span>}
+            {externalMapUrl ? <a className="primary-button" href={externalMapUrl} target="_blank" rel="noreferrer">{wholeRouteUrl ? `在${mapProvider.label}中打开` : `${mapProvider.label}打开首段（非整条路线）`} <ExternalLink size={16} /></a> : <span className="lifecycle-hint">当前坐标或路线不支持直接跳转，请逐个地点打开导航。</span>}
             {!wholeRouteUrl && stops.length > 2 && <p className="lifecycle-hint">高德 URI 不能完整携带当前多站路线，请分段导航；不会静默忽略中间地点。</p>}
           </div>
         </aside>
         <main className="route-map-area">
-          <MapSurface places={stops} routePlaces={stops} routePath={routeResult?.path} city={map?.city ?? "路线"} />
+          <MapSurface places={stops} routePlaces={stops} routePath={routeResult?.path} city={map?.city ?? "路线"} provider={mapProvider} />
           <div className={`route-map-note${routeError ? " error" : ""}`}><MapPin size={16} /><span>{routeLoading ? "正在向高德请求路线…" : routeError ? `${routeError}，当前显示站点连线。` : `已按${modes.find((item) => item.value === mode)?.label}计算真实路线。`}</span></div>
         </main>
       </div>

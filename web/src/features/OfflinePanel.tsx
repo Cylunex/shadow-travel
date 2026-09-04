@@ -10,6 +10,7 @@ import {
 } from "../offline";
 import { useTravel } from "../state/TravelContext";
 import { download, type PlanState } from "./lifecycle";
+import { RuntimeQueuePanel } from "./RuntimeQueuePanel";
 
 export function OfflinePanel() {
   const { refresh } = useTravel();
@@ -58,6 +59,7 @@ export function OfflinePanel() {
         只同步当前账号的记录。退出不会丢弃草稿；切换账号后隔离保留，恢复原账号才能上传。
       </p>
       <small>{usage}</small>
+      <RuntimeQueuePanel />
       <div className="compact-actions">
         <button
           className="secondary-button"

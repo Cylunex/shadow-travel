@@ -20,6 +20,7 @@
   "devDependencies": {
     "@amap/amap-jsapi-types": "^0.0.15",
     "@playwright/test": "^1.62.1",
+    "@types/google.maps": "^3.66.2",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

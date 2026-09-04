@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="google.maps" />
 /// <reference types="@amap/amap-jsapi-types" />
 
 declare const __SHADOW_AMAP_CONFIG__: {

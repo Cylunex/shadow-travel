@@ -94,7 +94,7 @@ export function ThemeMapPage() {
 
   const activeMap = map;
   const mapRoute = routes.find((route) => route.mapId === activeMap.id);
-  const mapProvider = mapProviderForCountry();
+  const mapProvider = mapProviderForCountry((selected || places[0])?.countryCode || ((selected || places[0])?.provider === "google" ? "ZZ" : "CN"));
   const visitedCount = places.filter((place) => place.visitedBy.includes("me")).length;
   const plannedCount = places.filter((place) => place.preference === "planned").length;
   const progressValue = places.length ? Math.round((visitedCount / places.length) * 100) : 0;

@@ -31,11 +31,16 @@ import {
   type Reservation,
 } from "./lifecycle";
 import type { Place } from "../types";
+import { TripRunPanel } from "./TripRunPanel";
+import { PlanV2Panel } from "./PlanV2Panel";
+import type { RunState } from "./lifecycle";
+import { TripReadiness } from "./TripReadiness";
 
 export function TripPage() {
   const { tripId = "" } = useParams();
   const { places, visits, recordVisit } = useTravel();
   const [state, setState] = useState<PlanState>();
+  const [activeRun, setActiveRun] = useState<RunState>();
   const [draft, setDraft] = useState<PlanDocument>();
   const [tab, setTab] = useState("plan");
   const [day, setDay] = useState("");
@@ -47,6 +52,7 @@ export function TripPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [delayMinutes, setDelayMinutes] = useState(30);
   const [search, setSearch] = useState("");
   const [dragged, setDragged] = useState<string>();
   const [dirty, setDirty] = useState(false);
@@ -123,21 +129,39 @@ export function TripPage() {
   ];
   const findPlace = (id: string) => catalog.find((p) => p.id === id);
   const change = (next: PlanDocument) => {
+    if (next.schema_version === 2) {
+      const ordered = [...next.stops].sort((a, b) =>
+        (a.day + a.start).localeCompare(b.day + b.start),
+      );
+      const edges = new Set(
+        ordered.slice(0, -1).map((s, i) => s.id + ":" + ordered[i + 1].id),
+      );
+      next = {
+        ...next,
+        candidate_metadata: Object.fromEntries(
+          Object.entries(next.candidate_metadata || {}).filter(([id]) =>
+            next.candidates.includes(id),
+          ),
+        ),
+        segments: (next.segments || []).filter((s) =>
+          edges.has(s.from_stop_id + ":" + s.to_stop_id),
+        ),
+      };
+    }
     setDraft(next);
     setDirty(true);
   };
   const confirmed = state.versions.find(
     (v) => v.revision === state.approved_revision,
   )?.document;
-  const display = tab === "field" ? confirmed : draft;
+  const display =
+    tab === "field"
+      ? activeRun?.document || state.run?.document || confirmed
+      : draft;
   const todaysStops = (display?.stops || [])
     .filter((s) => s.day === day)
     .sort((a, b) => a.start.localeCompare(b.start));
   const selectedPlace = findPlace(selected || todaysStops[0]?.place_id || "");
-  const completedIds = new Set(
-    visits.filter((v) => v.tripId === tripId).map((v) => v.placeId),
-  );
-  const nextStop = todaysStops.find((s) => !completedIds.has(s.place_id));
   async function save() {
     if (!draft || !state) return;
     const result = await api<PlanState>(`trips/${tripId}/plan`, "PUT", {
@@ -154,12 +178,16 @@ export function TripPage() {
     if (!draft) return;
     const f = new FormData(event.currentTarget);
     const stop: Stop = {
+      ...editingStop,
       id: editingStop?.id || stableClientId("stop"),
       place_id: String(f.get("place")),
       day: String(f.get("day")),
       start: String(f.get("start")),
       duration_minutes: Number(f.get("duration")),
-      travel_minutes: f.get("travel") ? Number(f.get("travel")) : null,
+      travel_minutes:
+        draft.schema_version === 1 && f.get("travel")
+          ? Number(f.get("travel"))
+          : null,
       mode: f.get("mode") as Stop["mode"],
       anchor: f.has("anchor"),
       note: String(f.get("note") || ""),
@@ -285,6 +313,35 @@ export function TripPage() {
             就近排序建议
           </button>
           <small>保留锚点 · 仅生成待确认草案</small>
+          <label>
+            调整未执行站次（分钟）
+            <input
+              aria-label="调整分钟"
+              type="number"
+              min="-180"
+              max="360"
+              value={delayMinutes}
+              onChange={(e) => setDelayMinutes(Number(e.target.value))}
+            />
+          </label>
+          <button
+            disabled={
+              !editing || busy || dirty || !state.revision || !delayMinutes
+            }
+            onClick={() =>
+              void run(async () =>
+                setProposal(
+                  await api(`trips/${tripId}/plan/repair-proposal`, "POST", {
+                    base_revision: state.revision,
+                    day,
+                    delay_minutes: delayMinutes,
+                  }),
+                ),
+              )
+            }
+          >
+            预览局部调整
+          </button>
         </div>
       )}
       {error && (
@@ -367,23 +424,26 @@ export function TripPage() {
                 </button>
               )}
             </div>
-            {tab === "field" &&
-              (!confirmed ? (
-                <p className="lifecycle-hint">
-                  还没有确认计划。请先保存并确认一个版本。
-                </p>
-              ) : (
-                <div className="next-stop">
-                  <small>下一站 · 根据本次到访推导</small>
-                  <h2>
-                    {nextStop
-                      ? findPlace(nextStop.place_id)?.name
-                      : "今天安排已完成"}
-                  </h2>
-                  <p>计划不代表去过，确认到访后才记录事实。</p>
-                </div>
-              ))}
-            {todaysStops.map((stop, index) => {
+            {tab === "field" && (
+              <TripRunPanel
+                key={tripId}
+                plan={state}
+                day={day}
+                catalog={catalog}
+                onSelect={setSelected}
+                onRun={setActiveRun}
+              />
+            )}
+            {tab === "plan" && (
+              <PlanV2Panel
+                plan={state}
+                draft={draft}
+                editing={editing}
+                dirty={dirty}
+                onChange={change}
+              />
+            )}
+            {(tab === "plan" ? todaysStops : []).map((stop, index) => {
               const p = findPlace(stop.place_id);
               return (
                 <article
@@ -416,10 +476,14 @@ export function TripPage() {
                   </button>
                   <p>{stop.note}</p>
                   <small>
-                    到下一站：
-                    {stop.travel_minutes === null
-                      ? "时间未核验"
-                      : `${stop.travel_minutes} 分钟（手工估计）`}
+                    {draft.schema_version === 2
+                      ? "交通估计见独立路段"
+                      : "到下一站："}
+                    {draft.schema_version === 2
+                      ? ""
+                      : stop.travel_minutes === null
+                        ? "时间未核验"
+                        : `${stop.travel_minutes} 分钟（手工估计）`}
                   </small>
                   <div className="compact-actions">
                     {tab === "plan" ? (
@@ -471,7 +535,7 @@ export function TripPage() {
                     ) : (
                       p && (
                         <button onClick={() => setVisitPlace(p)}>
-                          {completedIds.has(p.id) ? "再记一次" : "标记去过"}
+                          标记去过
                         </button>
                       )
                     )}
@@ -524,6 +588,10 @@ export function TripPage() {
           </section>
           <section className="trip-map">
             <MapSurface
+              provider={mapProviderForCountry(
+                selectedPlace?.countryCode ||
+                  (selectedPlace?.provider === "google" ? "ZZ" : "CN"),
+              )}
               places={(display?.candidates || [])
                 .map(findPlace)
                 .filter((p): p is Place => Boolean(p))}
@@ -546,14 +614,15 @@ export function TripPage() {
                   </button>
                   <a
                     className="secondary-button"
-                    href={mapProviderForCountry().externalPlaceUrl(
-                      selectedPlace,
-                    )}
+                    href={mapProviderForCountry(
+                      selectedPlace.countryCode ||
+                        (selectedPlace.provider === "google" ? "ZZ" : "CN"),
+                    ).externalPlaceUrl(selectedPlace)}
                     target="_blank"
                     rel="noreferrer"
                   >
                     <Navigation size={15} />
-                    高德导航
+                    地图导航
                   </a>
                   <Link to={`/places/${selectedPlace.id}`}>详情</Link>
                 </div>
@@ -705,6 +774,7 @@ export function TripPage() {
           </section>
           <section className="lifecycle-card">
             <h2>离线与出发检查</h2>
+            <TripReadiness plan={state} />
             <p>
               仅下载已确认计划、地点和自己的到访；不含底图、票据原件或照片。此设备的解锁者可读取副本，请勿在公用设备启用。
             </p>
@@ -935,12 +1005,16 @@ export function TripPage() {
                 到下一站分钟
                 <input
                   name="travel"
+                  disabled={draft.schema_version === 2}
                   defaultValue={editingStop?.travel_minutes ?? ""}
                   type="number"
                   min={0}
                   max={2880}
                   placeholder="未知，不能当作 0"
                 />
+                {draft.schema_version === 2 && (
+                  <small>请在 Plan v2 的独立路段中填写</small>
+                )}
               </label>
             </div>
             <label>
@@ -987,6 +1061,11 @@ export function TripPage() {
                 kind: f.get("kind") as Reservation["kind"],
                 note: String(f.get("note") || ""),
                 source_ref: String(f.get("source") || "") || null,
+                timezone: String(f.get("timezone") || "") || null,
+                fold:
+                  f.get("fold") === ""
+                    ? null
+                    : (Number(f.get("fold")) as 0 | 1),
               };
               change({ ...draft, reservations: [...draft.reservations, r] });
               setDialog(null);
@@ -1024,6 +1103,18 @@ export function TripPage() {
             <label>
               共享说明
               <textarea name="note" maxLength={2000} />
+            </label>
+            <label>
+              预约当地时区
+              <input name="timezone" placeholder={state.trip.timezone} />
+            </label>
+            <label>
+              夏令时重复时刻
+              <select name="fold">
+                <option value="">通常时间 / 待消歧</option>
+                <option value="0">首次出现</option>
+                <option value="1">第二次出现</option>
+              </select>
             </label>
             <label>
               已授权资料引用（可选）

@@ -776,6 +776,8 @@ def update_place(
         fact_values = {
             name: value for name, value in values.items() if name not in map_content_names
         }
+        if place.provider == "google" and set(fact_values) - {"name"}:
+            raise HTTPException(422, detail={"code": "google_reference_only_edit_alias"})
         for name, value in fact_values.items():
             if isinstance(value, str):
                 value = value.strip()
@@ -945,6 +947,11 @@ def add_visit(
         raise HTTPException(status_code=400, detail={"code": "invalid_idempotency_key"})
     request_hash = _client_payload_hash(body.model_dump(mode="json"))
     with _session(request) as session, session.begin():
+        session.execute(
+            select(ShadowUser)
+            .where(ShadowUser.shadow_user_id == user.shadow_user_id)
+            .with_for_update()
+        )
         replay = _client_mutation_replay(
             session, user.shadow_user_id, "visit.create", key, request_hash
         )
@@ -1385,6 +1392,7 @@ def _place_payload(
         "address": place.address,
         "district": place.district,
         "city": place.city,
+        "countryCode": place.country_code,
         "category": primary_link.category if primary_link else "地点",
         "tags": primary_link.tags if primary_link else [],
         "note": primary_link.shared_note if primary_link else "",
@@ -1394,7 +1402,10 @@ def _place_payload(
             "longitude": place.longitude,
             "latitude": place.latitude,
             "reference": place.coordinate_reference,
-        },
+        }
+        if place.longitude is not None and place.latitude is not None
+        else None,
+        "contentPolicy": "reference_only" if place.provider == "google" else "persisted",
         "provider": place.provider,
         "providerPlaceId": place.provider_place_id,
         "mapIds": map_ids,

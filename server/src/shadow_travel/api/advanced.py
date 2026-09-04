@@ -943,7 +943,9 @@ def export_map(
                         "geometry": {
                             "type": "Point",
                             "coordinates": [place.longitude, place.latitude],
-                        },
+                        }
+                        if place.longitude is not None and place.latitude is not None
+                        else None,
                         "properties": {
                             "name": place.name,
                             "display_name": link.display_name,
@@ -1355,9 +1357,7 @@ def _parse_import(
                                 "tags": str(row.get("tags", "")).split("|")
                                 if row.get("tags")
                                 else [],
-                                "custom_values": json.loads(
-                                    str(row.get("custom_values") or "{}")
-                                ),
+                                "custom_values": json.loads(str(row.get("custom_values") or "{}")),
                                 "counts_toward_progress": str(
                                     row.get("counts_toward_progress", "true")
                                 ).lower()
@@ -1431,9 +1431,7 @@ def _cursor_values(cursor: str, kind: str, required: set[str]) -> dict[str, str]
             raise ValueError
         return values
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail={"code": "invalid_pagination_cursor"}
-        ) from exc
+        raise HTTPException(status_code=422, detail={"code": "invalid_pagination_cursor"}) from exc
 
 
 def _share_payload(item: TravelShareLink) -> dict[str, object]:
@@ -1459,7 +1457,7 @@ def _public_point(link: TravelMapPlace, place: TravelPlace) -> dict[str, object]
         "tags": link.tags,
         "location_precision": precision,
     }
-    if precision != "hidden":
+    if precision != "hidden" and place.longitude is not None and place.latitude is not None:
         digits = 5 if precision == "exact" else 2
         payload["location"] = {
             "longitude": round(place.longitude, digits),

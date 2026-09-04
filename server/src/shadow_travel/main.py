@@ -23,6 +23,7 @@ from shadow_travel.api import (
     machine,
     media,
     planning,
+    runtime,
     travel,
     trips,
 )
@@ -52,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.llm.aclose()
         app.state.media.close()
         await app.state.amap.aclose()
+        await app.state.google.aclose()
         await app.state.oidc_http.aclose()
         app.state.database.dispose()
 
@@ -71,9 +73,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.oidc_http = oidc_http
     app.state.oidc = OIDCClient(resolved, oidc_http)
     app.state.amap = amap
+    app.state.google = GoogleMapProvider(key_file=resolved.google_maps_server_key_file)
     app.state.maps = MapProviderSelector(
         domestic=amap,
-        international=GoogleMapProvider(key_file=resolved.google_maps_server_key_file),
+        international=app.state.google,
     )
     app.state.media = MediaGateway(
         base_url=resolved.media_base_url,
@@ -159,6 +162,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(travel.router)
     app.include_router(trips.router)
     app.include_router(planning.router)
+    app.include_router(runtime.router)
     app.include_router(capture.router)
     app.include_router(experience.router)
     app.include_router(advanced.router)

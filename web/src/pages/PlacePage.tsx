@@ -23,6 +23,7 @@ import { AvatarStack, EmptyState, Modal, Toast } from "../components/Shared";
 import { VisitDialog } from "../components/VisitDialog";
 import { PhotoRecord, loadPhotoUrl, loadPlacePhotos, uploadPlacePhoto } from "../api";
 import { mapProviderForCountry } from "../map/provider";
+import { GooglePlaceDetails } from "../features/GooglePlaceDetails";
 import { useTravel } from "../state/TravelContext";
 import { Preference } from "../types";
 import { placeInMap } from "../domain";
@@ -83,7 +84,7 @@ export function PlacePage() {
   const placeMaps = maps.filter((map) => placeData.mapIds.includes(map.id));
   const placeVisits = visits.filter((visit) => visit.placeId === placeData.id);
   const visited = placeData.visitedBy.includes("me");
-  const mapProvider = mapProviderForCountry();
+  const mapProvider = mapProviderForCountry(placeData.countryCode || (placeData.provider === "google" ? "ZZ" : "CN"));
   const externalMapUrl = mapProvider.externalPlaceUrl(placeData);
 
   function notify(message: string) {
@@ -151,6 +152,7 @@ export function PlacePage() {
       <label className="context-selector">主题上下文 <select value={activeMapId || ""} onChange={event => { setChosenMapId(event.target.value || undefined); navigate(`/places/${placeData.id}`); }}><option value="">地点事实 · 请选择主题后编辑共享内容</option>{placeMaps.map(map => <option key={map.id} value={map.id}>{map.title}</option>)}</select></label>
       <div className="place-detail-layout">
         <main className="place-main-column">
+          {place.provider === "google" && place.providerPlaceId && <GooglePlaceDetails sourceId={place.providerPlaceId} key={place.providerPlaceId}/>}
           <section className="place-hero-card">
             <div className="photo-mosaic">
               {photos.map(({ record, url }, index) => <figure key={record.id} className={`photo-tile photo-${index + 1}`}><img src={url} alt={record.caption || `${place.name}的旅行照片`} />{record.caption && <figcaption>{record.caption}</figcaption>}</figure>)}
@@ -242,7 +244,7 @@ export function PlacePage() {
 
           <section className="side-card map-mini-card">
             <MapSurface places={[place]} selectedId={place.id} city={place.city} compact />
-            <p>{place.coordinate.latitude.toFixed(4)}, {place.coordinate.longitude.toFixed(4)} · {mapProvider.coordinateSystem}</p>
+            <p>{place.coordinate ? `${place.coordinate.latitude.toFixed(4)}, ${place.coordinate.longitude.toFixed(4)} · ${mapProvider.coordinateSystem}` : "已保存地点引用 · 地址和坐标需联网读取，不包含在离线包中"}</p>
           </section>
 
           <section className="side-card">

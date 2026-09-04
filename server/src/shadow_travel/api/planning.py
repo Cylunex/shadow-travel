@@ -3,25 +3,30 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import math
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from fastapi.responses import JSONResponse, Response
+from pydantic import Field
 from sqlalchemy import or_, select, update
 
 from shadow_travel.api.travel import _accessible_place, _place_payload, _visit_payload
 from shadow_travel.api.trips import _audit, _session, _trip_payload
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
+from shadow_travel.domain.plan_v2 import PlanDocument, StrictModel, check_plan, instant, upgrade
+from shadow_travel.domain.provider_policy import pack_digest, persisted_place
 from shadow_travel.infrastructure.models import (
     ShadowUser,
     TravelPlace,
     TravelPlan,
     TravelPlanVersion,
+    TravelRun,
+    TravelStopOutcome,
     TravelTrip,
     TravelTripMember,
     TravelVisit,
@@ -40,65 +45,6 @@ def accessible_trip(session, trip_id: str, user_id: str, edit: bool = False):
     if edit and trip.owner_user_id != user_id and (not member or member.role != "editor"):
         raise HTTPException(403, detail={"code": "trip_read_only"})
     return trip
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class Stop(StrictModel):
-    id: str = Field(min_length=1, max_length=80)
-    place_id: str
-    day: date
-    start: str = Field(default="09:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-    duration_minutes: int = Field(default=60, ge=1, le=1440)
-    travel_minutes: int | None = Field(default=None, ge=0, le=2880)
-    mode: Literal["walking", "transit", "driving", "bicycling"] = "walking"
-    anchor: bool = False
-    note: str = Field(default="", max_length=2000)
-
-
-class Reservation(StrictModel):
-    id: str = Field(min_length=1, max_length=80)
-    title: str = Field(min_length=1, max_length=200)
-    day: date
-    time: str = Field(default="09:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-    kind: Literal["stay", "transport", "ticket", "other"] = "other"
-    note: str = Field(default="", max_length=2000)
-    source_ref: str | None = Field(
-        default=None, pattern=r"^shadow://(?:asset|archive)/", max_length=500
-    )
-
-
-class Task(StrictModel):
-    id: str = Field(min_length=1, max_length=80)
-    title: str = Field(min_length=1, max_length=200)
-    done: bool = False
-    due: date | None = None
-    assignee: str | None = None
-
-
-class PlanDocument(StrictModel):
-    schema_version: Literal[1] = 1
-    timezone: str | None = Field(default=None, max_length=64)
-    candidates: list[str] = Field(default_factory=list, max_length=300)
-    stops: list[Stop] = Field(default_factory=list, max_length=300)
-    reservations: list[Reservation] = Field(default_factory=list, max_length=100)
-    tasks: list[Task] = Field(default_factory=list, max_length=200)
-    budget: float | None = Field(default=None, ge=0, le=1_000_000_000)
-    currency: str = Field(default="CNY", pattern=r"^[A-Z]{3}$")
-    constraints: str = Field(default="", max_length=4000)
-
-    @model_validator(mode="after")
-    def unique_ids(self):
-        for items in (self.stops, self.reservations, self.tasks):
-            if len({item.id for item in items}) != len(items):
-                raise ValueError("duplicate entity IDs")
-        if len(set(self.candidates)) != len(self.candidates):
-            raise ValueError("duplicate candidates")
-        if any(stop.place_id not in self.candidates for stop in self.stops):
-            raise ValueError("stops must reference candidate places")
-        return self
 
 
 class SavePlan(StrictModel):
@@ -134,6 +80,8 @@ def reorder_proposal(trip_id: str, body: ReorderInput, request: Request, user: U
         places = {s.place_id: session.get(TravelPlace, s.place_id) for s in stops}
         if any(p is None for p in places.values()):
             raise HTTPException(422, detail={"code": "place_no_longer_available"})
+        if any(p.longitude is None or p.latitude is None for p in places.values()):
+            raise HTTPException(422, detail={"code": "live_coordinates_required"})
         if len({p.coordinate_reference for p in places.values()}) > 1:
             raise HTTPException(422, detail={"code": "mixed_coordinates_require_conversion"})
 
@@ -145,16 +93,21 @@ def reorder_proposal(trip_id: str, body: ReorderInput, request: Request, user: U
             )
 
         changes = []
-        visited = set(
+        executed = set(
             session.scalars(
-                select(TravelVisit.place_id).where(
-                    TravelVisit.trip_id == trip_id,
-                    TravelVisit.shadow_user_id == user.shadow_user_id,
-                    TravelVisit.visited_on == body.day,
+                select(TravelStopOutcome.stop_id)
+                .join(TravelRun)
+                .where(
+                    TravelRun.trip_id == trip_id,
+                    TravelStopOutcome.state.in_(["completed", "in_progress"]),
                 )
             ).all()
         )
-        pinned = {s.id for s in stops if s.anchor or s.place_id in visited}
+        pinned = {s.id for s in stops if s.anchor or s.id in executed}
+        if len({s.timezone or document.timezone or trip.timezone for s in stops}) > 1:
+            raise HTTPException(
+                422, detail={"code": "cross_timezone_reorder_requires_manual_review"}
+            )
         index = 0
         while index < len(stops):
             if stops[index].id in pinned:
@@ -179,6 +132,14 @@ def reorder_proposal(trip_id: str, body: ReorderInput, request: Request, user: U
                     stop.start = slot
                     stop.travel_minutes = None
             index = end
+        if changes and document.schema_version == 2:
+            # Old segment endpoints/times are not evidence for a newly ordered route.
+            affected = {s.id for s in stops}
+            document.segments = [
+                s
+                for s in document.segments
+                if s.from_stop_id not in affected and s.to_stop_id not in affected
+            ]
         return {
             "schema_version": 1,
             "base_revision": plan.revision,
@@ -193,37 +154,6 @@ def reorder_proposal(trip_id: str, body: ReorderInput, request: Request, user: U
                 "新的交通时间需核验；不会自动确认计划",
             ],
         }
-
-
-def check_plan(document: PlanDocument, trip: TravelTrip):
-    errors, warnings = [], []
-    previous = None
-    for stop in sorted(document.stops, key=lambda row: (row.day, row.start, row.id)):
-        starts = datetime.fromisoformat(f"{stop.day}T{stop.start}")
-        if (
-            trip.start_date
-            and stop.day < trip.start_date
-            or trip.end_date
-            and stop.day > trip.end_date
-        ):
-            errors.append({"id": stop.id, "code": "outside_trip", "message": "安排超出旅程日期"})
-        if previous and starts < previous:
-            errors.append(
-                {"id": stop.id, "code": "overlap", "message": "与上一站停留或交通时间冲突"}
-            )
-        if stop.travel_minutes is None:
-            warnings.append(
-                {"id": stop.id, "code": "travel_unknown", "message": "交通时间未核验；不是 0 分钟"}
-            )
-        previous = starts + timedelta(minutes=stop.duration_minutes + (stop.travel_minutes or 0))
-    if document.stops:
-        warnings.append(
-            {
-                "code": "opening_unverified",
-                "message": "营业时间、无障碍和天气仍需核验；此检查不保证路线可通行",
-            }
-        )
-    return {"errors": errors, "warnings": warnings}
 
 
 def plan_payload(session, trip, user_id):
@@ -270,6 +200,65 @@ def plan_payload(session, trip, user_id):
     }
 
 
+class RepairInput(Revision):
+    day: date
+    delay_minutes: int = Field(ge=-180, le=360)
+
+
+@router.post("/trips/{trip_id}/plan/repair-proposal")
+def repair_proposal(trip_id: str, body: RepairInput, request: Request, user: User):
+    """Local, transparent repair; never changes the saved plan or execution."""
+    with _session(request) as session:
+        trip = accessible_trip(session, trip_id, user.shadow_user_id, True)
+        plan = session.get(TravelPlan, trip_id)
+        if not plan or plan.revision != body.base_revision:
+            raise HTTPException(409, detail={"code": "plan_revision_conflict"})
+        document = PlanDocument.model_validate(plan.document)
+        locked = set(
+            session.scalars(
+                select(TravelStopOutcome.stop_id)
+                .join(TravelRun)
+                .where(
+                    TravelRun.trip_id == trip_id,
+                    TravelStopOutcome.state.in_(["completed", "in_progress"]),
+                )
+            ).all()
+        )
+        changes = []
+        for stop in document.stops:
+            if stop.day != body.day or stop.anchor or stop.id in locked:
+                continue
+            timezone = stop.timezone or document.timezone or trip.timezone
+            try:
+                at = instant(stop.day, stop.start, timezone, stop.fold)
+            except ValueError:
+                raise HTTPException(422, detail={"code": "resolve_local_time_first"}) from None
+            target = (at + timedelta(minutes=body.delay_minutes)).astimezone(ZoneInfo(timezone))
+            previous = f"{stop.day} {stop.start}"
+            stop.day, stop.start, stop.fold = target.date(), target.strftime("%H:%M"), target.fold
+            changes.append({"id": stop.id, "from": previous, "to": f"{stop.day} {stop.start}"})
+            stop.travel_minutes = None
+        affected = {s["id"] for s in changes}
+        document.segments = [
+            s
+            for s in document.segments
+            if s.from_stop_id not in affected and s.to_stop_id not in affected
+        ]
+        return {
+            "base_revision": plan.revision,
+            "document": document.model_dump(mode="json"),
+            "changes": changes,
+            "checks": check_plan(document, trip),
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=15)).isoformat(),
+            "assumptions": [
+                "仅平移所选日期尚未执行且未固定的站次",
+                "不会移动固定预约或已执行站次",
+                "交通估计已作废，营业时间需重新核验",
+                "必须保存、确认并明确采用，才影响旅途中计划",
+            ],
+        }
+
+
 @router.get("/journeys/trips")
 def all_trips(request: Request, user: User):
     with _session(request) as session:
@@ -307,6 +296,15 @@ def save_plan(trip_id: str, body: SavePlan, request: Request, user: User):
                 },
             )
         existing = set(plan.document.get("candidates", [])) if plan else set()
+        if plan and plan.document.get("schema_version") == 2 and body.document.schema_version == 1:
+            raise HTTPException(409, detail={"code": "client_upgrade_required"})
+        # Stable station IDs cannot silently acquire a different identity across versions.
+        versions = session.scalars(
+            select(TravelPlanVersion).where(TravelPlanVersion.trip_id == trip_id)
+        ).all()
+        identities = {s["id"]: s["place_id"] for v in versions for s in v.document.get("stops", [])}
+        if any(s.id in identities and identities[s.id] != s.place_id for s in body.document.stops):
+            raise HTTPException(409, detail={"code": "stop_identity_changed"})
         for place_id in set(body.document.candidates) - existing:
             _accessible_place(session, place_id, user.shadow_user_id)
         allowed_members = {
@@ -370,6 +368,19 @@ def approve(trip_id: str, body: Revision, request: Request, user: User):
         return plan_payload(session, trip, user.shadow_user_id)
 
 
+@router.post("/trips/{trip_id}/plan/upgrade-preview")
+def preview_upgrade(trip_id: str, body: Revision, request: Request, user: User):
+    with _session(request) as session:
+        accessible_trip(session, trip_id, user.shadow_user_id, True)
+        plan = session.get(TravelPlan, trip_id)
+        if not plan or plan.revision != body.base_revision:
+            raise HTTPException(409, detail={"code": "plan_revision_conflict"})
+        return {
+            "base_revision": plan.revision,
+            "document": upgrade(plan.document).model_dump(mode="json"),
+        }
+
+
 @router.post("/trips/{trip_id}/members")
 def add_member(trip_id: str, body: MemberInput, request: Request, user: User):
     with _session(request) as session, session.begin():
@@ -411,6 +422,8 @@ def remove_member(trip_id: str, member_id: str, request: Request, user: User):
 
 @router.get("/trips/{trip_id}/pack")
 def pack(trip_id: str, request: Request, user: User):
+    from shadow_travel.api.runtime import run_payload
+
     with _session(request) as session:
         trip = accessible_trip(session, trip_id, user.shadow_user_id)
         payload = plan_payload(session, trip, user.shadow_user_id)
@@ -427,6 +440,16 @@ def pack(trip_id: str, request: Request, user: User):
         ).all()
         payload["places"] = [_place_payload(p, [], [], "none") for p in facts]
         payload["versions"] = [version]
+        payload["run"] = run_payload(session, trip_id, user.shadow_user_id, private_only=True)
+        if payload["run"]:
+            run_ids = payload["run"]["document"]["candidates"]
+            known = {p["id"] for p in payload["places"]}
+            payload["places"] += [
+                _place_payload(p, [], [], "none")
+                for p in session.scalars(
+                    select(TravelPlace).where(TravelPlace.place_id.in_(set(run_ids) - known))
+                ).all()
+            ]
         visits = session.scalars(
             select(TravelVisit).where(
                 TravelVisit.trip_id == trip_id, TravelVisit.shadow_user_id == user.shadow_user_id
@@ -453,7 +476,25 @@ def pack(trip_id: str, request: Request, user: User):
                 "共享权限离线无法即时撤销，副本 7 天过期。"
             ),
         }
-        return payload
+        payload["places"] = [persisted_place(p) for p in payload["places"]]
+        payload["manifest"] = {
+            "schema_version": 2,
+            "owner": user.shadow_user_id,
+            "instance": request.app.state.settings.public_origin.rstrip("/"),
+            "plan_revision": payload["approved_revision"],
+            "run_plan_revision": payload["run"]["plan_revision"] if payload["run"] else None,
+            "content_scope": [
+                "user_plan",
+                "user_aliases",
+                "source_references",
+                "own_visits",
+                "own_outcomes",
+            ],
+            "sha256": pack_digest(payload),
+        }
+        response = JSONResponse(payload, headers={"Cache-Control": "private, no-store"})
+        response.headers["X-Travel-Pack-SHA256"] = hashlib.sha256(response.body).hexdigest()
+        return response
 
 
 def ics_escape(text):
@@ -491,12 +532,23 @@ def calendar(trip_id: str, request: Request, user: User):
             "CALSCALE:GREGORIAN",
         ]
         events = [
-            (s.id, s.day, s.start, s.duration_minutes, session.get(TravelPlace, s.place_id).name)
+            (
+                s.id,
+                s.day,
+                s.start,
+                s.duration_minutes,
+                session.get(TravelPlace, s.place_id).name,
+                s.timezone,
+                s.fold,
+            )
             for s in doc.stops
         ]
-        events += [(r.id, r.day, r.time, 30, r.title) for r in doc.reservations]
-        for key, day, clock, minutes, title in events:
-            start = datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=tz).astimezone(UTC)
+        events += [(r.id, r.day, r.time, 30, r.title, r.timezone, r.fold) for r in doc.reservations]
+        for key, day, clock, minutes, title, timezone, fold in events:
+            try:
+                start = instant(day, clock, timezone or str(tz), fold)
+            except ValueError as exc:
+                raise HTTPException(422, detail={"code": str(exc)}) from None
             rows += [
                 "BEGIN:VEVENT",
                 f"UID:{trip_id}-{ics_escape(key)}@shadow-travel",

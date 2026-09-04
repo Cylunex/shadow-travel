@@ -35,9 +35,11 @@ export type Place = {
   category: string;
   tags: string[];
   note: string;
-  coordinate: { x: number; y: number; longitude: number; latitude: number; reference?: "GCJ02" | "WGS84" };
+  coordinate: { x: number; y: number; longitude: number; latitude: number; reference?: "GCJ02" | "WGS84" } | null;
+  countryCode?: string;
+  contentPolicy?: "reference_only" | "persisted";
   mapPoints?: Array<{ mapId: string; displayName?: string; category: string; tags: string[]; note: string; customValues: Record<string, unknown>; preference: Preference; version: number }>;
-  provider: "amap" | "manual";
+  provider: "amap" | "manual" | "google";
   providerPlaceId?: string;
   mapIds: string[];
   visitedBy: string[];
@@ -47,6 +49,11 @@ export type Place = {
   price?: string;
   photos: string[];
 };
+
+export type LocatedPlace = Place & { coordinate: NonNullable<Place["coordinate"]> };
+export function isLocated(place: Place): place is LocatedPlace {
+  return !!place.coordinate && Number.isFinite(place.coordinate.longitude) && Number.isFinite(place.coordinate.latitude);
+}
 
 export type Visit = {
   id: string;

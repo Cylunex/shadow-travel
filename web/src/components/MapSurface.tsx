@@ -1,13 +1,14 @@
 import { MapPin } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AMapSurface } from "../map/AMapSurface";
+import { GoogleSurface } from "../map/GoogleSurface";
 import {
-  MapCoordinate,
+  type MapCoordinate,
   isAMapConfigured,
   coordinateForAMap,
 } from "../map/amapRuntime";
-import { ClientMapProvider, mapProviderForCountry } from "../map/provider";
-import { Place } from "../types";
+import { type ClientMapProvider, mapProviderForCountry } from "../map/provider";
+import { isLocated, type Place, type LocatedPlace } from "../types";
 import { isLocalReadMode } from "../offline";
 
 export function MapSurface({
@@ -17,9 +18,10 @@ export function MapSurface({
   routePlaces = [],
   city,
   compact = false,
-  provider = mapProviderForCountry(),
+  provider,
   routePath,
   onMapClick,
+  onGoogleMapClick,
 }: {
   places: Place[];
   selectedId?: string;
@@ -30,14 +32,31 @@ export function MapSurface({
   provider?: ClientMapProvider;
   routePath?: MapCoordinate[];
   onMapClick?: (coordinate: MapCoordinate) => void;
+  onGoogleMapClick?: (coordinate: MapCoordinate) => void;
 }) {
-  const signature = [...places, ...routePlaces]
+  const [region, setRegion] = useState<"amap" | "google">();
+  const selected = places.find((p) => p.id === selectedId) || places[0];
+  const auto =
+    selected?.provider === "google" ||
+    (selected?.countryCode && selected.countryCode !== "CN")
+      ? "google"
+      : "amap";
+  const actual =
+    provider ||
+    mapProviderForCountry((region || auto) === "google" ? "ZZ" : "CN");
+  const filtered = places.filter((p) =>
+    actual.id === "google"
+      ? p.provider === "google" || (p.countryCode && p.countryCode !== "CN")
+      : p.provider !== "google" && (!p.countryCode || p.countryCode === "CN"),
+  );
+  const located = filtered.filter(isLocated);
+  const signature = located
     .filter((p) => p.coordinate.reference === "WGS84")
     .map((p) => `${p.id}:${p.coordinate.longitude}:${p.coordinate.latitude}`)
     .join("|");
   const [converted, setConverted] = useState<{
     signature: string;
-    coordinates: Record<string, Place["coordinate"]>;
+    coordinates: Record<string, LocatedPlace["coordinate"]>;
   }>();
   const [conversionError, setConversionError] = useState("");
   const [online, setOnline] = useState(navigator.onLine && !isLocalReadMode());
@@ -51,77 +70,104 @@ export function MapSurface({
     };
   }, []);
   useEffect(() => {
-    if (!signature || !isAMapConfigured() || !online) return;
+    if (actual.id !== "amap" || !signature || !isAMapConfigured() || !online)
+      return;
     let active = true;
     setConversionError("");
     Promise.all(
-      [
-        ...new Map(
-          [...places, ...routePlaces]
-            .filter((p) => p.coordinate.reference === "WGS84")
-            .map((p) => [p.id, p]),
-        ).values(),
-      ].map(
-        async (p) => [p.id, await coordinateForAMap(p.coordinate)] as const,
-      ),
+      located
+        .filter((p) => p.coordinate.reference === "WGS84")
+        .map(
+          async (p) => [p.id, await coordinateForAMap(p.coordinate)] as const,
+        ),
     )
-      .then((values) => {
-        if (active)
-          setConverted({ signature, coordinates: Object.fromEntries(values) });
-      })
-      .catch((e) => {
-        if (active) setConversionError(e.message);
-      });
+      .then(
+        (values) =>
+          active &&
+          setConverted({ signature, coordinates: Object.fromEntries(values) }),
+      )
+      .catch((e) => active && setConversionError(e.message));
     return () => {
       active = false;
     };
-  }, [signature, online]);
-  if (
-    signature &&
-    online &&
-    isAMapConfigured() &&
-    converted?.signature !== signature
-  )
-    return (
-      <section className="map-surface map-unavailable" role="status">
-        {conversionError || "正在转换 WGS-84 坐标，完成后显示真实地图…"}
-      </section>
-    );
-  const mapped = (items: Place[]) =>
+  }, [signature, online, actual.id]);
+  const mapped = (items: LocatedPlace[]) =>
     items.map((p) =>
-      p.coordinate.reference === "WGS84" && converted?.coordinates[p.id]
+      converted?.signature === signature && converted.coordinates[p.id]
         ? { ...p, coordinate: converted.coordinates[p.id] }
         : p,
     );
-  if (provider.id === "amap" && isAMapConfigured() && online) {
-    return (
-      <AMapSurface
-        places={mapped(places)}
+  let surface;
+  if (actual.id === "google" && online)
+    surface = (
+      <GoogleSurface
+        places={filtered}
         selectedId={selectedId}
         onSelect={onSelect}
-        routePlaces={mapped(routePlaces)}
         routePath={routePath}
-        city={city}
         compact={compact}
-        provider={provider}
-        onMapClick={onMapClick}
+        onMapClick={onGoogleMapClick}
       />
     );
-  }
+  else if (actual.id === "amap" && isAMapConfigured() && online)
+    surface =
+      signature && converted?.signature !== signature ? (
+        <section className="map-surface map-unavailable" role="status">
+          {conversionError || "正在转换 WGS-84 坐标…"}
+        </section>
+      ) : (
+        <AMapSurface
+          places={mapped(located)}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          routePlaces={mapped(
+            routePlaces
+              .filter(isLocated)
+              .filter((p) => located.some((l) => l.id === p.id)),
+          )}
+          routePath={routePath}
+          city={city}
+          compact={compact}
+          provider={actual}
+          onMapClick={onMapClick}
+        />
+      );
+  else
+    surface = (
+      <section
+        className={`map-surface map-unavailable${compact ? " compact" : ""}`}
+        role="status"
+      >
+        <MapPin size={30} />
+        <strong>{online ? "地图服务尚未就绪" : "离线模式 · 底图未下载"}</strong>
+        <p>
+          {online
+            ? "请配置地图服务；地点清单仍可使用，不显示模拟底图。"
+            : "仅下载自己的计划与地点引用，底图和实时详情需联网。"}
+        </p>
+      </section>
+    );
   return (
-    <section
-      className={`map-surface map-unavailable${compact ? " compact" : ""}`}
-      role="status"
-    >
-      <MapPin size={30} />
-      <strong>
-        {navigator.onLine ? "地图服务尚未就绪" : "离线模式 · 底图未下载"}
-      </strong>
-      <p>
-        {navigator.onLine
-          ? "需要配置对应地图服务；这里不会展示模拟底图。地点清单仍可使用。"
-          : "已下载的地点与地址仍可阅读。恢复网络后可打开高德导航。"}
-      </p>
-    </section>
+    <div className="provider-surface">
+      {surface}
+      {!provider && !compact && (
+        <label className="provider-switch">
+          底图
+          <select
+            aria-label="地图区域"
+            value={actual.id}
+            onChange={(e) => setRegion(e.target.value as "amap" | "google")}
+          >
+            <option value="amap">中国大陆 · 高德</option>
+            <option value="google">海外 · Google</option>
+          </select>
+          {filtered.length < places.length && (
+            <small>
+              当前区域 {filtered.length}/{places.length}
+            </small>
+          )}
+        </label>
+      )}
+    </div>
   );
 }

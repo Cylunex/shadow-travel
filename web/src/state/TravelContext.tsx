@@ -13,6 +13,7 @@ import {
   updateTravelRoute
 } from "../api";
 import { configureOffline, localEntries, replayPendingVisits } from "../offline";
+import { replayRuntimeCommands } from "../features/runtimeOffline";
 import { localDate, placeInMap } from "../domain";
 import type { TravelWorkspace } from "../api";
 import type { PlanState } from "../features/lifecycle";
@@ -115,7 +116,7 @@ export function TravelProvider({ children, userId, demo = false }: { children: R
 
   useEffect(() => {
     if (developmentDemo) return;
-    const replay = () => { void replayPendingVisits(basePath).then(refresh).catch(() => { /* Outbox remains visible and recoverable in Settings. */ }); };
+    const replay = () => { void Promise.all([replayPendingVisits(basePath), replayRuntimeCommands()]).then(refresh).catch(() => { /* Outboxes remain visible and recoverable in Settings. */ }); };
     window.addEventListener("online", replay);
     if (navigator.onLine) replay();
     return () => window.removeEventListener("online", replay);

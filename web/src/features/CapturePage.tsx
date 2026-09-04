@@ -11,6 +11,7 @@ import {
 import { useTravel } from "../state/TravelContext";
 import { api, type Capture } from "./lifecycle";
 import type { Place } from "../types";
+import { GoogleCapture } from "./GoogleCapture";
 
 export function CapturePage() {
   const { places, maps, refresh } = useTravel();
@@ -116,6 +117,7 @@ export function CapturePage() {
           收集地点
         </button>
       </header>
+      <GoogleCapture />
       <div className="lifecycle-tabs">
         {[
           ["pending", "待整理"],

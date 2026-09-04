@@ -61,6 +61,23 @@ const document = {
 async function fixtures(page: Page) {
   let revision = 1;
   let draft = structuredClone(document);
+  let runtime: {
+    id: string;
+    trip_id: string;
+    plan_revision: number;
+    revision: number;
+    member_id: string;
+    document: typeof document;
+    outcomes: {
+      stop_id: string;
+      member_id: string;
+      state: string;
+      revision: number;
+      shared: boolean;
+      visit_id?: string;
+    }[];
+    bindings: unknown[];
+  } | null = null;
   await page.route("**/api/browser/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname.split(
       "/api/browser/v1/",
@@ -103,7 +120,41 @@ async function fixtures(page: Page) {
         location_history_mode: "disabled",
       };
     else if (path === "journeys/trips") data = { trips: [trip] };
-    else if (path === "trips/trip1/plan") {
+    else if (path === "trips/trip1/run") data = { run: runtime };
+    else if (path === "trips/trip1/run/start") {
+      runtime = {
+        id: "run1",
+        trip_id: "trip1",
+        plan_revision: 1,
+        revision: 1,
+        member_id: "test-user",
+        document: {
+          ...document,
+          stops: [
+            ...document.stops,
+            { ...document.stops[0], id: "s2", start: "15:00" },
+          ],
+        },
+        outcomes: [],
+        bindings: [],
+      };
+      data = { run: runtime };
+    } else if (path === "trips/trip1/run/commands" && runtime) {
+      const command = route.request().postDataJSON();
+      runtime.outcomes = [
+        ...runtime.outcomes.filter((o) => o.stop_id !== command.stop_id),
+        {
+          stop_id: command.stop_id,
+          member_id: "test-user",
+          state: command.state,
+          revision: command.base_revision + 1,
+          shared: command.shared,
+          visit_id: command.visit_date ? "visit1" : undefined,
+        },
+      ];
+      runtime.revision++;
+      data = { run: runtime };
+    } else if (path === "trips/trip1/plan") {
       if (route.request().method() === "PUT") {
         draft = route.request().postDataJSON().document;
         revision++;
@@ -124,6 +175,7 @@ async function fixtures(page: Page) {
     else if (path === "trips/trip1/pack")
       data = {
         ...plan(),
+        run: runtime,
         visits: [],
         offline: {
           owner: "test-user",
@@ -162,6 +214,202 @@ async function fixtures(page: Page) {
     });
   });
 }
+
+test("same place has independent runtime stops and explicit visit confirmation", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "旅途中", exact: true }).click();
+  await page.getByRole("button", { name: "开始旅途中模式" }).click();
+  await expect(page.locator(".trip-runtime .plan-stop")).toHaveCount(2);
+  let payload: Record<string, unknown> | undefined;
+  page.on("request", (req) => {
+    if (req.url().endsWith("/run/commands")) payload = req.postDataJSON();
+  });
+  await page.getByRole("button", { name: "完成 / 记录到访" }).first().click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(payload).toBeUndefined();
+  await page.getByRole("button", { name: "确认去过并完成此站" }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(payload?.stop_id).toBe("s1");
+  expect(payload?.visit_date).toBeTruthy();
+  await expect(page.locator(".trip-runtime .plan-stop").nth(1)).toContainText(
+    "未开始",
+  );
+  await expect(page.locator(".trip-runtime .plan-stop").first()).toContainText(
+    "已关联到访",
+  );
+});
+
+test("Google unavailable state never draws an imitation map", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto("./");
+  await page.getByLabel("地图区域").selectOption("google");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Google 浏览器地图密钥未配置" }),
+  ).toBeVisible();
+  await expect(page.locator(".google-attributions")).toHaveCount(0);
+  await page.goto("capture");
+  await page
+    .getByText("海外地点 · Google Maps 搜索与收藏", { exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "搜索 Google Maps" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBeTruthy();
+});
+
+test("offline runtime command stays queued without marking completed", async ({
+  page,
+  context,
+}) => {
+  await fixtures(page);
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "旅途中", exact: true }).click();
+  await page.getByRole("button", { name: "开始旅途中模式" }).click();
+  await page.getByRole("button", { name: "资料与准备" }).click();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "下载旅行副本" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "离线包已写入设备" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "旅途中", exact: true }).click();
+  await context.setOffline(true);
+  await page.getByRole("button", { name: "完成 / 记录到访" }).first().click();
+  await page.getByRole("button", { name: "确认去过并完成此站" }).click();
+  await expect(page.locator(".trip-runtime .plan-stop").first()).toContainText(
+    "待同步",
+  );
+  await expect(page.locator(".trip-runtime .plan-stop").nth(1)).toContainText(
+    "未开始",
+  );
+  await context.setOffline(false);
+});
+
+test("lost runtime response replays the exact operation rather than creating another", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "旅途中", exact: true }).click();
+  await page.getByRole("button", { name: "开始旅途中模式" }).click();
+  const requests: unknown[] = [];
+  await page.route("**/run/commands", async (route) => {
+    requests.push(route.request().postDataJSON());
+    if (requests.length === 1) await route.abort("failed");
+    else await route.fallback();
+  });
+  await page.getByRole("button", { name: "完成 / 记录到访" }).first().click();
+  await page.getByRole("button", { name: "确认去过并完成此站" }).click();
+  await expect(page.locator(".trip-runtime .plan-stop").first()).toContainText(
+    "待同步",
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.locator(".trip-runtime .plan-stop").first()).toContainText(
+    "已关联到访",
+  );
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+});
+
+test("Google confirmation stores only source reference and user alias", async ({
+  page,
+}) => {
+  await fixtures(page);
+  let body: Record<string, unknown> | undefined;
+  await page.route("**/maps/places?**", (route) =>
+    route.fulfill({
+      json: {
+        places: [
+          {
+            provider_place_id: "google-id",
+            name: "Google 原始名称",
+            address: "实时地址",
+            longitude: 139.7,
+            latitude: 35.6,
+            attributions: [],
+            category: "museum",
+            country_code: "JP",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/maps/google/references", (route) => {
+    body = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        ...place,
+        id: "foreign1",
+        name: body?.alias,
+        coordinate: null,
+        provider: "google",
+        providerPlaceId: "google-id",
+        countryCode: "JP",
+      },
+    });
+  });
+  await page.goto("capture");
+  await page
+    .getByText("海外地点 · Google Maps 搜索与收藏", { exact: true })
+    .click();
+  await page.getByLabel("查找地点", { exact: true }).fill("museum");
+  await page.getByRole("button", { name: "搜索 Google Maps" }).click();
+  await page.getByRole("button", { name: /Google 原始名称/ }).click();
+  await page.getByLabel("我的地点别名").fill("我的东京第一站");
+  await page.getByRole("button", { name: "确认保存引用" }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "已收藏" }),
+  ).toBeVisible();
+  expect(body).toEqual({
+    provider_place_id: "google-id",
+    alias: "我的东京第一站",
+    country_code: "JP",
+    city: "",
+  });
+});
+
+test("Plan v2 editor preserves candidate metadata and remains usable on a phone", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.route("**/plan/upgrade-preview", (route) =>
+    route.fulfill({
+      json: {
+        document: {
+          ...document,
+          schema_version: 2,
+          segments: [],
+          candidate_metadata: {},
+        },
+      },
+    }),
+  );
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "预览升级到 Plan v2 草稿" }).click();
+  await page.getByText("Plan v2 · 时区与独立路段", { exact: true }).click();
+  await page.getByText("候选偏好与备选分组", { exact: true }).click();
+  await page.getByRole("combobox", { name: "优先级", exact: true }).selectOption("must");
+  await page.getByLabel("收藏理由", { exact: true }).fill("希望优先安排");
+  await page.getByRole("button", { name: /保存草稿/ }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "草稿已保存" }),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "优先级", exact: true })).toHaveValue("must");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBeTruthy();
+});
 
 for (const width of [390, 430, 768, 1280, 1440]) {
   test(`responsive lifecycle at ${width}px`, async ({ page }) => {
@@ -310,7 +558,13 @@ test("mobile sheets have three reachable sizes and dark mode keeps navigation us
   await expect(panel).toHaveAttribute("data-snap", "full");
   await page.getByRole("button", { name: "半屏", exact: true }).click();
   await expect(panel).toHaveAttribute("data-snap", "half");
-  await expect.poll(async () => { const sheet = await page.locator(".trip-plan-panel").boundingBox(); const map = await panel.boundingBox(); return Math.abs(sheet!.height / map!.height - 0.5); }).toBeLessThan(0.02);
+  await expect
+    .poll(async () => {
+      const sheet = await page.locator(".trip-plan-panel").boundingBox();
+      const map = await panel.boundingBox();
+      return Math.abs(sheet!.height / map!.height - 0.5);
+    })
+    .toBeLessThan(0.02);
   const sheet = await page.locator(".trip-plan-panel").boundingBox();
   const nav = await page.locator(".bottom-nav").boundingBox();
   expect(sheet!.y + sheet!.height).toBeLessThanOrEqual(nav!.y + 1);

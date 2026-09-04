@@ -496,7 +496,7 @@ def _public_place(link: TravelMapPlace, place: TravelPlace) -> dict[str, object]
         "tags": link.tags,
         "location_precision": precision,
     }
-    if precision != "hidden":
+    if precision != "hidden" and place.longitude is not None and place.latitude is not None:
         digits = 5 if precision == "exact" else 2
         payload["location"] = {
             "longitude": round(place.longitude, digits),

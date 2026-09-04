@@ -29,6 +29,10 @@ class MapProviderOperationUnavailable(MapProviderError):
     pass
 
 
+class MapProviderQuotaLimited(MapProviderError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class GeoPoint:
     longitude: float
@@ -54,6 +58,7 @@ class ProviderPlace:
     city: str | None = None
     district: str | None = None
     category: str | None = None
+    attributions: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
