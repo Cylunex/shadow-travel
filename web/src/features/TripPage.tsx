@@ -35,6 +35,7 @@ import { TripRunPanel } from "./TripRunPanel";
 import { PlanV2Panel } from "./PlanV2Panel";
 import type { RunState } from "./lifecycle";
 import { TripReadiness } from "./TripReadiness";
+import { orderedStops, pruneSegments } from "./planTime";
 
 export function TripPage() {
   const { tripId = "" } = useParams();
@@ -130,21 +131,15 @@ export function TripPage() {
   const findPlace = (id: string) => catalog.find((p) => p.id === id);
   const change = (next: PlanDocument) => {
     if (next.schema_version === 2) {
-      const ordered = [...next.stops].sort((a, b) =>
-        (a.day + a.start).localeCompare(b.day + b.start),
-      );
-      const edges = new Set(
-        ordered.slice(0, -1).map((s, i) => s.id + ":" + ordered[i + 1].id),
-      );
       next = {
-        ...next,
+        ...pruneSegments({
+          ...next,
+          timezone: next.timezone || state.trip.timezone,
+        }),
         candidate_metadata: Object.fromEntries(
           Object.entries(next.candidate_metadata || {}).filter(([id]) =>
             next.candidates.includes(id),
           ),
-        ),
-        segments: (next.segments || []).filter((s) =>
-          edges.has(s.from_stop_id + ":" + s.to_stop_id),
         ),
       };
     }
@@ -158,9 +153,10 @@ export function TripPage() {
     tab === "field"
       ? activeRun?.document || state.run?.document || confirmed
       : draft;
-  const todaysStops = (display?.stops || [])
-    .filter((s) => s.day === day)
-    .sort((a, b) => a.start.localeCompare(b.start));
+  const todaysStops = orderedStops(
+    display?.stops || [],
+    display?.timezone || state.trip.timezone,
+  ).filter((s) => s.day === day);
   const selectedPlace = findPlace(selected || todaysStops[0]?.place_id || "");
   async function save() {
     if (!draft || !state) return;
@@ -180,7 +176,7 @@ export function TripPage() {
     const stop: Stop = {
       ...editingStop,
       id: editingStop?.id || stableClientId("stop"),
-      place_id: String(f.get("place")),
+      place_id: editingStop?.place_id || String(f.get("place")),
       day: String(f.get("day")),
       start: String(f.get("start")),
       duration_minutes: Number(f.get("duration")),
@@ -427,7 +423,7 @@ export function TripPage() {
             {tab === "field" && (
               <TripRunPanel
                 key={tripId}
-                plan={state}
+                plan={{ ...state, run: activeRun || state.run }}
                 day={day}
                 catalog={catalog}
                 onSelect={setSelected}
@@ -961,6 +957,7 @@ export function TripPage() {
                 name="place"
                 required
                 defaultValue={editingStop?.place_id}
+                disabled={!!editingStop}
               >
                 {draft.candidates.map((id) => (
                   <option value={id} key={id}>
@@ -968,6 +965,11 @@ export function TripPage() {
                   </option>
                 ))}
               </select>
+              {editingStop && (
+                <small>
+                  站次地点不可更换；如需换地点，请删除此安排并新建一站，保留历史执行身份。
+                </small>
+              )}
             </label>
             <div className="field-pair">
               <label>

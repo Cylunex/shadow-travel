@@ -37,6 +37,8 @@ async function send(tripId: string, command: OutcomeCommand, owner: string) {
   return payload as { run: RunState };
 }
 export async function submitCommand(tripId: string, command: OutcomeCommand) {
+  const scope = offlineOwner(),
+    owner = currentOfflineUser();
   // One pending operation per member/stop; explicit conflict resolution, never last-write-wins.
   const pending = await pendingCommands();
   if (
@@ -47,8 +49,6 @@ export async function submitCommand(tripId: string, command: OutcomeCommand) {
     )
   )
     throw new Error("此站已有待同步操作，请先同步或在离线管理中处理");
-  const scope = offlineOwner(),
-    owner = currentOfflineUser();
   const online = navigator.onLine && !isLocalReadMode();
   if (!online) {
     const pack = (await localEntries<PlanState>("pack", scope)).find(
@@ -57,11 +57,15 @@ export async function submitCommand(tripId: string, command: OutcomeCommand) {
     if (
       !pack?.run ||
       pack.run.id !== command.run_id ||
+      pack.run.plan_revision !== command.plan_revision ||
+      !pack.run.document.stops.some((s) => s.id === command.stop_id) ||
       !pack.offline ||
-      new Date(pack.offline.expires_at) < new Date()
+      !(new Date(pack.offline.expires_at).getTime() > Date.now())
     )
       throw new Error("请先联网开始旅途中模式并重新下载旅行副本，再离线执行");
   }
+  if (scope !== offlineOwner())
+    throw new Error("账号变化，未保存执行操作；请回到原账号重试");
   // Write-ahead receipt survives a lost HTTP response, even without a downloaded Pack.
   await localWrite(
     "runtime-outbox",

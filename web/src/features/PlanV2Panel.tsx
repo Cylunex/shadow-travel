@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, type PlanState, type PlanDocument } from "./lifecycle";
 import { stableClientId } from "../offline";
+import { orderedStops } from "./planTime";
 export function PlanV2Panel({
   plan,
   draft,
@@ -47,9 +48,7 @@ export function PlanV2Panel({
         {error && <p role="alert">{error}</p>}
       </div>
     );
-  const stops = [...draft.stops].sort((a, b) =>
-    (a.day + a.start).localeCompare(b.day + b.start),
-  );
+  const stops = orderedStops(draft.stops, draft.timezone || plan.trip.timezone);
   return (
     <details className="plan-v2">
       <summary>Plan v2 · 时区与独立路段</summary>

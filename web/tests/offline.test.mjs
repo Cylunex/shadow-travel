@@ -74,6 +74,15 @@ test("queue is isolated by account and application path", async () => {
   configureOffline(uid, "/travel/");
   assert.equal((await pendingVisits()).length, 1);
 });
+test("account switch during asynchronous queue creation cannot move a private draft", async () => {
+  const original = uid;
+  const saving = queueVisit("place", payload("switch-during-save"));
+  configureOffline("new-owner", "/travel/");
+  await assert.rejects(saving, /账号变化/);
+  assert.equal((await pendingVisits()).length, 0);
+  configureOffline(original, "/travel/");
+  assert.equal((await pendingVisits()).length, 0);
+});
 test("401 and changed server account never delete entries or upload", async () => {
   await queueVisit("place", payload("private"));
   let uploads = 0;

@@ -10,14 +10,22 @@ from pydantic import Field, model_validator
 from sqlalchemy import select
 
 from shadow_travel.api.planning import StrictModel, User
-from shadow_travel.api.travel import PlaceCreate, _accessible_place, _place_payload
+from shadow_travel.api.travel import (
+    PlaceCreate,
+    _accessible_place,
+    _client_mutation_replay,
+    _client_payload_hash,
+    _place_payload,
+    _store_client_mutation,
+)
 from shadow_travel.api.trips import _audit, _session
-from shadow_travel.infrastructure.models import TravelCapture, TravelPlace
+from shadow_travel.infrastructure.models import ShadowUser, TravelCapture, TravelPlace
 
 router = APIRouter(prefix="/api/browser/v1", tags=["capture"])
 
 
 class CaptureInput(StrictModel):
+    client_record_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9:_-]{8,128}$")
     text: str = Field(min_length=1, max_length=20000)
     source_url: str | None = Field(default=None, max_length=2048)
     reason: str = Field(default="", max_length=2000)
@@ -94,12 +102,34 @@ def list_captures(request: Request, user: User, q: str = "", status: str | None 
 @router.post("/captures", status_code=201)
 def create_capture(body: CaptureInput, request: Request, user: User):
     with _session(request) as session, session.begin():
-        item = TravelCapture(owner_user_id=user.shadow_user_id, **body.model_dump())
+        data = body.model_dump(exclude={"client_record_id"})
+        hashed = _client_payload_hash(data)
+        if body.client_record_id:
+            session.execute(
+                select(ShadowUser)
+                .where(ShadowUser.shadow_user_id == user.shadow_user_id)
+                .with_for_update()
+            )
+            previous = _client_mutation_replay(
+                session, user.shadow_user_id, "capture.create", body.client_record_id, hashed
+            )
+            if previous is not None:
+                return {**previous, "replayed": True}
+        item = TravelCapture(owner_user_id=user.shadow_user_id, **data)
         session.add(item)
         session.flush()
         _audit(
             request, session, user.shadow_user_id, "travel_capture.create", item.capture_id, None
         )
+        if body.client_record_id:
+            _store_client_mutation(
+                session,
+                user.shadow_user_id,
+                "capture.create",
+                body.client_record_id,
+                hashed,
+                payload(item),
+            )
         return payload(item)
 
 

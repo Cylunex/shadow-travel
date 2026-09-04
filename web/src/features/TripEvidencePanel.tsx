@@ -3,7 +3,8 @@ import { request } from "../api";
 import type { Place } from "../types";
 import { resolveGooglePlaces } from "../map/googleRuntime";
 import { routeForPlaces, type VerifiedRoute } from "../map/routeService";
-import type { Stop } from "./lifecycle";
+import type { Stop, PlanDocument } from "./lifecycle";
+import { orderedStops } from "./planTime";
 type Forecast = {
   date: string;
   fetched_at: string;
@@ -27,22 +28,30 @@ export function TripEvidencePanel({
   stops,
   places,
   day,
+  document,
+  timezone,
 }: {
   stops: Stop[];
   places: Place[];
   day: string;
+  document: PlanDocument;
+  timezone: string;
 }) {
-  const ordered = stops
-    .filter((s) => s.day === day)
-    .sort((a, b) => a.start.localeCompare(b.start));
+  const all = orderedStops(stops, document.timezone || timezone);
+  const ordered = all.filter((s) => s.day === day);
   const [id, setId] = useState("");
   const stop = ordered.find((s) => s.id === id) || ordered[0];
   const place = places.find((p) => p.id === stop?.place_id);
-  const next = places.find(
-    (p) =>
-      p.id ===
-      ordered[ordered.findIndex((s) => s.id === stop?.id) + 1]?.place_id,
-  );
+  const nextStop = all[all.findIndex((s) => s.id === stop?.id) + 1];
+  const next = places.find((p) => p.id === nextStop?.place_id);
+  const mode =
+    (document.schema_version === 2
+      ? document.segments?.find(
+          (s) => s.from_stop_id === stop?.id && s.to_stop_id === nextStop?.id,
+        )?.mode
+      : undefined) ||
+    stop?.mode ||
+    "walking";
   const [weather, setWeather] = useState<{ key: string; value: Forecast }>();
   const [route, setRoute] = useState<{ key: string; value: VerifiedRoute }>();
   const [matrix, setMatrix] = useState<{
@@ -52,7 +61,22 @@ export function TripEvidencePanel({
   }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const key = `${day}:${stop?.id}:${next?.id}:${stop?.mode}`;
+  const key = JSON.stringify([
+    day,
+    stop?.id,
+    nextStop?.id,
+    mode,
+    stops,
+    document.segments,
+    places.map((p) => [
+      p.id,
+      p.name,
+      p.coordinate,
+      p.provider,
+      p.providerPlaceId,
+      p.countryCode,
+    ]),
+  ]);
   const perform = async (action: () => Promise<void>) => {
     setBusy(true);
     setError("");
@@ -91,11 +115,7 @@ export function TripEvidencePanel({
             void perform(async () =>
               setRoute({
                 key,
-                value: await routeForPlaces(
-                  [place!, next!],
-                  stop.mode,
-                  place!.city,
-                ),
+                value: await routeForPlaces([place!, next!], mode, place!.city),
               }),
             )
           }
@@ -137,6 +157,8 @@ export function TripEvidencePanel({
               const candidates = ordered
                 .map((s) => places.find((p) => p.id === s.place_id))
                 .filter((p): p is Place => !!p);
+              if (candidates.length !== ordered.length)
+                throw new Error("部分站次地点不可用，无法完整比较当天交通");
               if (
                 candidates.some(
                   (p) =>
@@ -155,7 +177,7 @@ export function TripEvidencePanel({
                     method: "POST",
                     cache: "no-store",
                     body: JSON.stringify({
-                      mode: stop.mode,
+                      mode,
                       stops: live.map((p) => ({
                         longitude: p.coordinate.longitude,
                         latitude: p.coordinate.latitude,

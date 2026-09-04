@@ -17,6 +17,8 @@ import {
   type PendingCommand,
 } from "./runtimeOffline";
 import { TripEvidencePanel } from "./TripEvidencePanel";
+import { orderedStops } from "./planTime";
+import { useTravel } from "../state/TravelContext";
 
 const labels: Record<OutcomeState, string> = {
   pending: "未开始",
@@ -38,6 +40,7 @@ export function TripRunPanel({
   onSelect: (id: string) => void;
   onRun: (run: RunState) => void;
 }) {
+  const { refresh } = useTravel();
   const [run, setRun] = useState<RunState | null>(plan.run || null);
   const [pending, setPending] = useState<PendingCommand[]>([]);
   const [error, setError] = useState("");
@@ -62,13 +65,13 @@ export function TripRunPanel({
   useEffect(() => {
     let active = true;
     const load = async () => {
+      if (active) await loadPending();
       if (navigator.onLine && !isLocalReadMode()) {
         const result = await api<{ run: RunState | null }>(
           `trips/${plan.trip.id}/run`,
         );
         if (active && result.run) accept(result.run);
       } else if (plan.run) accept(plan.run);
-      if (active) await loadPending();
     };
     void load().catch((e) => active && setError(e.message));
     const update = () => void load().catch((e) => setError(e.message));
@@ -96,9 +99,10 @@ export function TripRunPanel({
     run?.outcomes.find(
       (o) => o.stop_id === id && o.member_id === run.member_id,
     );
-  const stops = (run?.document.stops || [])
-    .filter((s) => s.day === day)
-    .sort((a, b) => a.start.localeCompare(b.start));
+  const stops = orderedStops(
+    run?.document.stops || [],
+    run?.document.timezone || plan.trip.timezone,
+  ).filter((s) => s.day === day);
   const next =
     stops.find((s) => own(s.id)?.state === "in_progress") ||
     stops.find((s) => !own(s.id) || own(s.id)?.state === "pending");
@@ -126,6 +130,10 @@ export function TripRunPanel({
         ? "本次站次状态已保存。个人照片和记录仍然私密。"
         : "已保存在此设备，尚未同步；不会提前显示为已完成。",
     );
+    if (result)
+      await refresh().catch(() =>
+        setNotice("站次已保存；到访列表刷新失败，请联网刷新，勿重复提交。"),
+      );
   }
   return (
     <section className="trip-runtime">
@@ -294,6 +302,8 @@ export function TripRunPanel({
       {run && !stops.length && <p>这一天没有站次，可切换日期查看。</p>}
       {run && (
         <TripEvidencePanel
+          document={run.document}
+          timezone={plan.trip.timezone}
           stops={run.document.stops}
           places={catalog}
           day={day}

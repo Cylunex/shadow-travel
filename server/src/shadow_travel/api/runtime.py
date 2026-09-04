@@ -205,7 +205,7 @@ def command(trip_id: str, body: OutcomeCommand, request: Request, user: User):
                 raise HTTPException(409, detail={"code": "idempotency_payload_changed"})
             return {
                 **previous.response_json,
-                "run": run_payload(session, trip_id, uid, private_only=True),
+                "run": run_payload(session, trip_id, uid),
                 "replayed": True,
             }
         run = session.scalar(select(TravelRun).where(TravelRun.trip_id == trip_id))
@@ -284,4 +284,5 @@ def command(trip_id: str, body: OutcomeCommand, request: Request, user: User):
             )
         )
         _audit(request, session, uid, "travel_run.outcome", trip_id, None)
-        return result
+        # Persist a private receipt, but return the same authorized projection as GET.
+        return {**result, "run": run_payload(session, trip_id, uid)}

@@ -35,7 +35,8 @@ export function RoutePage() {
   const { routes, mapById, placeById, reorderRouteStop, setRouteOrder, setRouteMode } = useTravel();
   const navigate = useNavigate();
   const route = routes.find((item) => item.id === routeId);
-  const [mode, setMode] = useState<RouteMode>(route?.mode ?? "walking");
+  const mode = route?.mode ?? "walking";
+  const [modeSaving, setModeSaving] = useState(false);
   const [toast, setToast] = useState<string>();
   const [routeResult, setRouteResult] = useState<VerifiedRoute>();
   const [routeLoading, setRouteLoading] = useState(false);
@@ -43,10 +44,13 @@ export function RoutePage() {
   const [draggedIndex, setDraggedIndex] = useState<number>();
   const map = route ? mapById(route.mapId) : undefined;
   const stops = useMemo(() => route ? route.stopIds.map((id) => placeById(id)).filter(Boolean) as NonNullable<ReturnType<typeof placeById>>[] : [], [placeById, route]);
-  const stopSignature = stops.map((place) => place.id).join(",");
+  const stopSignature = JSON.stringify(stops.map((place) => [place.id, place.coordinate, place.provider, place.providerPlaceId, place.countryCode]));
   const mapProvider = mapProviderForCountry(stops[0]?.countryCode || (stops[0]?.provider === "google" ? "ZZ" : "CN"));
 
   useEffect(() => {
+    setRouteError(undefined);
+    setRouteResult(undefined);
+    setRouteLoading(false);
     if (!route || stops.length < 2) return;
     let active = true;
     setRouteLoading(true);
@@ -89,7 +93,7 @@ export function RoutePage() {
           </div>
           <div className="mode-switch">
             {modes.map(({ value, label, icon: Icon }) => (
-              <button key={value} type="button" className={mode === value ? "active" : ""} onClick={() => { setMode(value as RouteMode); void setRouteMode(route.id, value as RouteMode).catch((error) => { setToast(error instanceof Error ? error.message : "出行方式保存失败"); }); }}>
+              <button key={value} type="button" disabled={modeSaving} className={mode === value ? "active" : ""} onClick={() => { setModeSaving(true); void setRouteMode(route.id, value as RouteMode).catch((error) => { setToast(error instanceof Error ? error.message : "出行方式保存失败"); }).finally(() => setModeSaving(false)); }}>
                 <Icon size={17} /> {label}
               </button>
             ))}

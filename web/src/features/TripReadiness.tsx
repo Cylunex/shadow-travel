@@ -4,9 +4,20 @@ import type { PlanState } from "./lifecycle";
 export function TripReadiness({ plan }: { plan: PlanState }) {
   const [pack, setPack] = useState<PlanState>();
   useEffect(() => {
-    void localEntries<PlanState>("pack")
-      .then((rows) => setPack(rows.find((p) => p.id === plan.trip.id)?.value))
-      .catch(() => setPack(undefined));
+    let active = true;
+    const load = () =>
+      void localEntries<PlanState>("pack")
+        .then(
+          (rows) =>
+            active && setPack(rows.find((p) => p.id === plan.trip.id)?.value),
+        )
+        .catch(() => active && setPack(undefined));
+    load();
+    window.addEventListener("travel-pack-changed", load);
+    return () => {
+      active = false;
+      window.removeEventListener("travel-pack-changed", load);
+    };
   }, [plan]);
   return (
     <section className="readiness">

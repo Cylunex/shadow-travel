@@ -62,8 +62,8 @@ def own_experience(session, key, uid):
     return row
 
 
-def validate_refs(session, body, uid):
-    if body.trip_id:
+def validate_refs(session, body, uid, existing_trip_id=None):
+    if body.trip_id and body.trip_id != existing_trip_id:
         accessible_trip(session, body.trip_id, uid)
     for key in body.visit_ids:
         visit = session.get(TravelVisit, key)
@@ -157,7 +157,7 @@ def create_memory(body: MemoryInput, request: Request, user: User):
 def edit_memory(memory_id: str, body: MemoryInput, request: Request, user: User):
     with _session(request) as session, session.begin():
         row = own_experience(session, memory_id, user.shadow_user_id)
-        validate_refs(session, body, user.shadow_user_id)
+        validate_refs(session, body, user.shadow_user_id, row.trip_id)
         if row.kind != body.kind:
             raise HTTPException(422, detail={"code": "cannot_change_memory_kind"})
         row.title = body.title

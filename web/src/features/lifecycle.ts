@@ -4,6 +4,7 @@ import {
   localEntries,
   localWrite,
   currentOfflineUser,
+  offlineOwner,
 } from "../offline";
 import type { Place, Trip, Visit } from "../types";
 
@@ -180,7 +181,11 @@ export function download(
 export async function tripList(): Promise<Trip[]> {
   if (!navigator.onLine || isLocalReadMode())
     return (await localEntries<PlanState>("pack"))
-      .filter((row) => new Date(row.value.offline!.expires_at) > new Date())
+      .filter(
+        (row) =>
+          row.value.offline &&
+          new Date(row.value.offline.expires_at).getTime() > Date.now(),
+      )
       .map((row) => row.value.trip);
   return (await api<{ trips: Trip[] }>("journeys/trips")).trips;
 }
@@ -190,12 +195,16 @@ export async function readPlan(id: string): Promise<PlanState> {
   const cached = (await localEntries<PlanState>("pack")).find(
     (row) => row.id === id,
   )?.value;
-  if (!cached || new Date(cached.offline!.expires_at) < new Date())
+  if (
+    !cached?.offline ||
+    !(new Date(cached.offline.expires_at).getTime() > Date.now())
+  )
     throw new Error("此旅程未下载或离线授权已过期，请联网重新下载");
   return cached;
 }
 export async function downloadPack(id: string) {
   const owner = currentOfflineUser();
+  const scope = offlineOwner();
   const response = await fetch(`${basePath}api/browser/v1/trips/${id}/pack`, {
     credentials: "same-origin",
     cache: "no-store",
@@ -222,8 +231,18 @@ export async function downloadPack(id: string) {
     if (actual !== response.headers.get("X-Travel-Pack-SHA256"))
       throw new Error("旅行副本完整性校验失败，未保存；请重新下载");
   }
-  await localWrite("pack", id, pack);
-  await navigator.storage?.persist?.();
+  if (owner !== currentOfflineUser() || scope !== offlineOwner())
+    throw new Error("下载期间账号已变化，未保存旅行副本；请回到原账号重试");
+  if (
+    pack.trip?.id !== id ||
+    !pack.offline ||
+    !(new Date(pack.offline.expires_at).getTime() > Date.now())
+  )
+    throw new Error("旅行副本内容不匹配或已过期，未保存");
+  await localWrite("pack", id, pack, scope);
+  window.dispatchEvent(new Event("travel-pack-changed"));
+  // Persistence permission is best-effort: a refusal does not undo a successful IDB write.
+  await navigator.storage?.persist?.().catch(() => false);
   return pack;
 }
 export const tripCalendarUrl = (id: string) =>

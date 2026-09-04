@@ -125,7 +125,7 @@ export function TravelProvider({ children, userId, demo = false }: { children: R
   const value = useMemo<TravelState>(() => ({
     trips,
     maps,
-    places: places.map(place => visits.some(visit => visit.placeId === place.id) ? { ...place, visitedBy: [...new Set([...place.visitedBy, "me"])] } : place),
+    places: places.map(place => visits.some(visit => visit.placeId === place.id && visit.syncState !== "pending" && visit.syncState !== "conflict") ? { ...place, visitedBy: [...new Set([...place.visitedBy, "me"])] } : place),
     visits,
     routes,
     members,
@@ -242,16 +242,16 @@ export function TravelProvider({ children, userId, demo = false }: { children: R
       if (target < 0 || target >= route.stopIds.length) return;
       const stopIds = [...route.stopIds];
       [stopIds[index], stopIds[target]] = [stopIds[target], stopIds[index]];
-      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
       if (!developmentDemo) await updateTravelRoute(routeId, { stopIds });
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
     },
     setRouteOrder: async (routeId, stopIds) => {
-      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
       if (!developmentDemo) await updateTravelRoute(routeId, { stopIds });
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, stopIds } : item));
     },
     setRouteMode: async (routeId, mode) => {
-      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, mode } : item));
       if (!developmentDemo) await updateTravelRoute(routeId, { mode });
+      setRoutes((current) => current.map((item) => item.id === routeId ? { ...item, mode } : item));
     },
     refresh
   }), [capabilities, maps, members, places, refresh, routes, trips, visits]);

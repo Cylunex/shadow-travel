@@ -222,6 +222,7 @@ export async function uploadPlacePhoto(
   mapId: string,
   placeId: string,
   file: File,
+  visitId: string,
   caption = ""
 ): Promise<PhotoRecord> {
   const upload = await request<{
@@ -233,6 +234,7 @@ export async function uploadPlacePhoto(
       original_filename: file.name,
       content_type: file.type,
       size_bytes: file.size,
+      visit_id: visitId,
       caption
     })
   });

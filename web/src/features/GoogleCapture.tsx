@@ -53,6 +53,7 @@ export function GoogleCapture() {
         <label>
           国家 / 地区代码
           <input
+            disabled={busy}
             required
             pattern="[A-Z]{2}"
             maxLength={2}
@@ -68,15 +69,17 @@ export function GoogleCapture() {
         <label>
           城市（自己填写）
           <input
+            disabled={busy}
             value={city}
             onChange={(e) => setCity(e.target.value)}
             placeholder="例如 Tokyo"
-            maxLength={120}
+            maxLength={100}
           />
         </label>
         <label>
           查找地点
           <input
+            disabled={busy}
             required
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -98,6 +101,7 @@ export function GoogleCapture() {
           <button
             className="lifecycle-card"
             key={p.provider_place_id}
+            disabled={busy}
             onClick={() => {
               setChoice(p);
               setAlias("");
@@ -165,12 +169,12 @@ export function GoogleCapture() {
       )}
       <button
         className="secondary-button"
-        disabled={country === "CN"}
+        disabled={busy || country === "CN" || !/^[A-Z]{2}$/.test(country)}
         onClick={() => setShowMap((value) => !value)}
       >
         {showMap ? "收起 Google 选点地图" : "在 Google 地图选点"}
       </button>
-      {showMap && (
+      {showMap && country !== "CN" && /^[A-Z]{2}$/.test(country) && (
         <div style={{ height: 350, marginTop: 12 }}>
           <MapSurface
             places={[]}

@@ -161,8 +161,17 @@ def plan_payload(session, trip, user_id):
     doc = plan.document if plan else PlanDocument().model_dump(mode="json")
     member = session.get(TravelTripMember, (trip.trip_id, user_id))
     role = "owner" if trip.owner_user_id == user_id else member.role
+    candidate_ids = set(doc.get("candidates", []))
+    revisions = {plan.approved_revision} if plan and plan.approved_revision else set()
+    run = session.scalar(select(TravelRun).where(TravelRun.trip_id == trip.trip_id))
+    if run:
+        revisions.add(run.plan_revision)
+    for revision in revisions:
+        version = session.get(TravelPlanVersion, (trip.trip_id, revision))
+        if version:
+            candidate_ids.update(version.document.get("candidates", []))
     facts = session.scalars(
-        select(TravelPlace).where(TravelPlace.place_id.in_(doc.get("candidates", [])))
+        select(TravelPlace).where(TravelPlace.place_id.in_(candidate_ids))
     ).all()
     members = [
         {

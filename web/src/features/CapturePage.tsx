@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Inbox, Search, MapPin, Check, Plus, ExternalLink } from "lucide-react";
 import { Modal, EmptyState } from "../components/Shared";
@@ -12,6 +12,7 @@ import { useTravel } from "../state/TravelContext";
 import { api, type Capture } from "./lifecycle";
 import type { Place } from "../types";
 import { GoogleCapture } from "./GoogleCapture";
+import { stableClientId } from "../offline";
 
 export function CapturePage() {
   const { places, maps, refresh } = useTravel();
@@ -27,6 +28,7 @@ export function CapturePage() {
   const [choice, setChoice] = useState<AMapSearchResult>();
   const [mode, setMode] = useState("search");
   const [mapId, setMapId] = useState("");
+  const collectionIds = useRef(new Map<string, string>());
   const load = async () =>
     setItems((await api<{ captures: Capture[] }>("captures")).captures);
   useEffect(() => {
@@ -56,12 +58,20 @@ export function CapturePage() {
         : [text];
       if (texts.length > 100)
         throw new Error("一次最多收集 100 条，请分批保存");
-      for (const text of texts)
-        await api("captures", "POST", {
+      for (const [index, text] of texts.entries()) {
+        const body = {
           text,
           source_url: f.get("url") || null,
           reason: f.get("reason") || "",
+        };
+        const key = JSON.stringify([index, body]);
+        if (!collectionIds.current.has(key))
+          collectionIds.current.set(key, stableClientId("capture"));
+        await api("captures", "POST", {
+          ...body,
+          client_record_id: collectionIds.current.get(key),
         });
+      }
       await load();
       setAdding(false);
     });
@@ -110,7 +120,10 @@ export function CapturePage() {
         </div>
         <button
           className="primary-button"
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            collectionIds.current.clear();
+            setAdding(true);
+          }}
           disabled={!navigator.onLine}
         >
           <Plus size={17} />

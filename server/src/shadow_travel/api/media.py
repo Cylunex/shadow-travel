@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from shadow_travel.api.travel import _accessible_map, _ensure_visit_share
+from shadow_travel.api.travel import _accessible_map
 from shadow_travel.auth.dependencies import current_browser_user
 from shadow_travel.auth.store import AuthenticatedUser
 from shadow_travel.infrastructure.models import (
@@ -34,7 +34,7 @@ class PhotoUploadCreate(BaseModel):
     original_filename: str = Field(min_length=1, max_length=255)
     content_type: str = Field(min_length=1, max_length=100)
     size_bytes: int = Field(gt=0, le=MAX_PHOTO_BYTES)
-    visit_id: str | None = Field(default=None, max_length=36)
+    visit_id: str = Field(min_length=1, max_length=36)
     caption: str = Field(default="", max_length=500)
     captured_at: datetime | None = None
     longitude: float | None = Field(default=None, ge=-180, le=180)
@@ -87,6 +87,10 @@ def _visit_for_upload(
     visit = session.get(TravelVisit, visit_id)
     if visit is None or visit.place_id != place_id or visit.shadow_user_id != user_id:
         raise HTTPException(status_code=404, detail={"code": "travel_visit_not_found"})
+    record = session.scalar(select(TravelVisitRecord).where(TravelVisitRecord.visit_id == visit_id))
+    if record and record.visibility == "shared":
+        # Photos inherit record visibility, including a change during upload.
+        raise HTTPException(409, detail={"code": "make_record_private_before_upload"})
     return visit
 
 
@@ -224,24 +228,15 @@ def complete_photo_upload(
             if completed_photo is not None:
                 record, visit = _photo_context(session, completed_photo)
                 return _photo_payload(completed_photo, visit, record, include_private=True)
+        visit = _visit_for_upload(session, intent.visit_id, place_id, user.shadow_user_id)
+        if visit is None:
+            raise HTTPException(422, detail={"code": "explicit_visit_required"})
         try:
             media_id = _media(request).complete_upload(intent.media_upload_id)
         except MediaGatewayNotConfigured as exc:
             raise HTTPException(status_code=503, detail={"code": "media_unavailable"}) from exc
         except MediaGatewayError as exc:
             raise HTTPException(status_code=502, detail={"code": "media_request_failed"}) from exc
-        visit = _visit_for_upload(session, intent.visit_id, place_id, user.shadow_user_id)
-        if visit is None:
-            visit = TravelVisit(
-                place_id=place_id,
-                shadow_user_id=user.shadow_user_id,
-                source_map_id=map_id,
-                visited_on=date.today(),
-            )
-            session.add(visit)
-            session.flush()
-            _ensure_visit_share(session, visit.visit_id, map_id)
-            intent.visit_id = visit.visit_id
         record = session.scalar(
             select(TravelVisitRecord).where(TravelVisitRecord.visit_id == visit.visit_id)
         )

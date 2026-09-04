@@ -59,6 +59,8 @@ export type Visit = {
   id: string;
   clientRecordId?: string;
   version?: number;
+  recordVisibility?: "private" | "shared" | null;
+  sharedMapId?: string | null;
   placeId: string;
   date: string;
   displayDate: string;

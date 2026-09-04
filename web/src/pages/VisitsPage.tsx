@@ -36,7 +36,7 @@ export function VisitsPage() {
       </header>
 
       <section className="visit-stat-strip">
-        <div><strong>{visits.length}</strong><span>今年到访</span></div>
+        <div><strong>{visits.length}</strong><span>全部到访（含待同步）</span></div>
         <div><strong>{new Set(visits.map((visit) => visit.placeId)).size}</strong><span>不同地点</span></div>
         <div><strong>{visits.reduce((total, visit) => total + visit.photoCount, 0)}</strong><span>旅行照片</span></div>
         <div><strong>{new Set(visits.map((visit) => placeById(visit.placeId)?.city).filter(Boolean)).size}</strong><span>到访城市</span></div>

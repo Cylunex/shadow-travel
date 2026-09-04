@@ -148,7 +148,8 @@ export async function queueVisit(
   placeId: string,
   input: OfflineVisitInput,
 ): Promise<Visit> {
-  const existing = (await localEntries<QueueItem>("outbox")).find(
+  const scope = offlineOwner();
+  const existing = (await localEntries<QueueItem>("outbox", scope)).find(
     (entry) => entry.id === input.client_record_id,
   );
   const hash = await crypto.subtle.digest(
@@ -158,6 +159,7 @@ export async function queueVisit(
   const payloadHash = Array.from(new Uint8Array(hash), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
+  if (scope !== offlineOwner()) throw new Error("账号变化，未保存到访草稿；请回到原账号重试");
   if (existing) {
     if (existing.value.payloadHash !== payloadHash)
       throw new Error("同一客户端记录 ID 已用于其他内容；原记录仍保留");
@@ -170,7 +172,7 @@ export async function queueVisit(
     queuedAt: new Date().toISOString(),
     payloadHash,
   };
-  await localWrite("outbox", input.client_record_id, item);
+  await localWrite("outbox", input.client_record_id, item, scope);
   return asVisit(item);
 }
 export async function submitQueuedVisit(

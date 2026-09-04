@@ -21,11 +21,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { MapSurface } from "../components/MapSurface";
 import { AvatarStack, EmptyState, Modal, Toast } from "../components/Shared";
 import { VisitDialog } from "../components/VisitDialog";
+import { VisitRecordEditor } from "../components/VisitRecordEditor";
 import { PhotoRecord, loadPhotoUrl, loadPlacePhotos, uploadPlacePhoto } from "../api";
 import { mapProviderForCountry } from "../map/provider";
 import { GooglePlaceDetails } from "../features/GooglePlaceDetails";
 import { useTravel } from "../state/TravelContext";
-import { Preference } from "../types";
+import { Preference, type Visit } from "../types";
 import { placeInMap } from "../domain";
 
 const preferenceLabels: { value: Preference; label: string }[] = [
@@ -37,7 +38,7 @@ const preferenceLabels: { value: Preference; label: string }[] = [
 
 export function PlacePage() {
   const { placeId, mapId: contextMapId } = useParams();
-  const { placeById, maps, visits, members, capabilities, setPreference, updatePlace, recordVisit } = useTravel();
+  const { placeById, maps, visits, members, capabilities, setPreference, updatePlace, recordVisit, refresh } = useTravel();
   const navigate = useNavigate();
   const fact = placeById(placeId);
   const [chosenMapId, setChosenMapId] = useState<string>();
@@ -47,28 +48,38 @@ export function PlacePage() {
   const [editingNote, setEditingNote] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const [addingVisit, setAddingVisit] = useState(false);
+  const [editingVisit, setEditingVisit] = useState<Visit>();
   const [saving, setSaving] = useState(false);
   const [photos, setPhotos] = useState<Array<{ record: PhotoRecord; url: string }>>([]);
   const [photosLoading, setPhotosLoading] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoVisitId, setPhotoVisitId] = useState("");
+  const [photoScope, setPhotoScope] = useState("");
+  const photoRequest = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activePlace = place;
+  const activePlaceId = activePlace?.id;
+  const currentPhotoScope = `${activeMapId || ""}:${activePlaceId || ""}`;
+  const visiblePhotos = photoScope === currentPhotoScope ? photos : [];
 
   const refreshPhotos = useCallback(async () => {
-    if (!capabilities.media || !activePlace || !activeMapId) return;
+    const requestId = ++photoRequest.current;
+    setPhotos([]);
+    setPhotosLoading(false);
+    if (!capabilities.media || !activePlaceId || !activeMapId) return;
     setPhotosLoading(true);
     try {
-      const records = await loadPlacePhotos(activeMapId, activePlace.id);
+      const records = await loadPlacePhotos(activeMapId, activePlaceId);
       const resolved = await Promise.all(records.map(async (record) => ({ record, url: await loadPhotoUrl(record.id) })));
-      setPhotos(resolved);
+      if (requestId === photoRequest.current) { setPhotos(resolved); setPhotoScope(currentPhotoScope); }
     } catch {
-      setPhotos([]);
+      if (requestId === photoRequest.current) setPhotos([]);
     } finally {
-      setPhotosLoading(false);
+      if (requestId === photoRequest.current) setPhotosLoading(false);
     }
-  }, [activeMapId, activePlace, capabilities.media]);
+  }, [activeMapId, activePlaceId, currentPhotoScope, capabilities.media]);
 
-  useEffect(() => { void refreshPhotos(); }, [refreshPhotos]);
+  useEffect(() => { void refreshPhotos(); return () => { photoRequest.current++; }; }, [refreshPhotos]);
 
   if (!activePlace) {
     return (
@@ -83,6 +94,7 @@ export function PlacePage() {
   const placeData = activePlace;
   const placeMaps = maps.filter((map) => placeData.mapIds.includes(map.id));
   const placeVisits = visits.filter((visit) => visit.placeId === placeData.id);
+  const photoVisit = placeVisits.find((v) => v.id === photoVisitId && v.syncState !== "pending" && v.syncState !== "conflict" && v.recordVisibility !== "shared");
   const visited = placeData.visitedBy.includes("me");
   const mapProvider = mapProviderForCountry(placeData.countryCode || (placeData.provider === "google" ? "ZZ" : "CN"));
   const externalMapUrl = mapProvider.externalPlaceUrl(placeData);
@@ -111,10 +123,10 @@ export function PlacePage() {
     const file = event.target.files?.[0];
     const mapId = activeMapId;
     event.target.value = "";
-    if (!file || !mapId) return;
+    if (!file || !mapId || !photoVisit) return;
     setPhotoUploading(true);
     try {
-      await uploadPlacePhoto(mapId, placeData.id, file);
+      await uploadPlacePhoto(mapId, placeData.id, file, photoVisit.id);
       await refreshPhotos();
       notify("照片已保存为私密内容");
     } catch (error) {
@@ -155,20 +167,29 @@ export function PlacePage() {
           {place.provider === "google" && place.providerPlaceId && <GooglePlaceDetails sourceId={place.providerPlaceId} key={place.providerPlaceId}/>}
           <section className="place-hero-card">
             <div className="photo-mosaic">
-              {photos.map(({ record, url }, index) => <figure key={record.id} className={`photo-tile photo-${index + 1}`}><img src={url} alt={record.caption || `${place.name}的旅行照片`} />{record.caption && <figcaption>{record.caption}</figcaption>}</figure>)}
-              {!photos.length && <div className="photo-empty"><span>{place.category.slice(0, 1) || "旅"}</span><strong>{photosLoading ? "正在读取照片…" : capabilities.media ? "留下这里的第一张照片" : "照片能力尚未配置"}</strong><small>{capabilities.media ? "原始 EXIF 与 GPS 会在媒体中心清理" : "配置 Shadow Media 后即可在这里上传私密照片"}</small></div>}
+              {visiblePhotos.map(({ record, url }, index) => <figure key={record.id} className={`photo-tile photo-${index + 1}`}><img src={url} alt={record.caption || `${place.name}的旅行照片`} />{record.caption && <figcaption>{record.caption}</figcaption>}</figure>)}
+              {!visiblePhotos.length && <div className="photo-empty"><span>{place.category.slice(0, 1) || "旅"}</span><strong>{photosLoading ? "正在读取照片…" : capabilities.media ? "留下这里的第一张照片" : "照片能力尚未配置"}</strong><small>{capabilities.media ? "先选择主题和已有到访；上传照片不会自动创建到访" : "配置 Shadow Media 后即可在这里上传私密照片"}</small></div>}
             </div>
             <div className="photo-toolbar">
               <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadPhoto} hidden />
               <span><ShieldCheck size={15} /> 照片默认仅自己可见，主动共享后主题成员可见</span>
-              {capabilities.media && <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={photoUploading}>{photoUploading ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}{photoUploading ? "上传中…" : "上传照片"}</button>}
+              {placeVisits.some((v) => v.recordVisibility === "shared") && <small>已共享的记录需先通过“补充个人记录”改为私密，才能上传新照片，避免意外共享。</small>}
+              {capabilities.media && <>
+                <label>照片所属到访
+                  <select aria-label="照片所属到访" value={photoVisit?.id || ""} onChange={(e) => setPhotoVisitId(e.target.value)} disabled={photoUploading}>
+                    <option value="">请先选择已有到访</option>
+                    {placeVisits.filter((v) => v.syncState !== "pending" && v.syncState !== "conflict").map((v) => <option value={v.id} key={v.id} disabled={v.recordVisibility === "shared"}>{v.date}{v.recordVisibility === "shared" ? " · 记录已共享" : ""}</option>)}
+                  </select>
+                </label>
+                <button className="secondary-button" type="button" onClick={() => fileInputRef.current?.click()} disabled={photoUploading || !activeMapId || !photoVisit}>{photoUploading ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}{photoUploading ? "上传中…" : "上传照片"}</button>
+              </>}
             </div>
           </section>
 
           <section className="detail-section">
             <div className="section-heading-row">
               <div><span className="eyebrow">SHARED NOTE</span><h2>同行备注</h2></div>
-              <button className="text-button" type="button" onClick={() => { setNoteDraft(place.note); setEditingNote(true); }}><Pencil size={15} /> 编辑</button>
+              <button className="text-button" type="button" disabled={!activeMapId} onClick={() => { setNoteDraft(place.note); setEditingNote(true); }}><Pencil size={15} /> 编辑</button>
             </div>
             <p className="large-note">{place.note}</p>
             {place.recommended && (
@@ -196,7 +217,8 @@ export function PlacePage() {
                     <div>
                       {visit.rating && <span className="personal-rating">个人感受 {visit.rating}/5</span>}
                       <p>{visit.note}</p>
-                      <small><Camera size={14} /> {visit.photoCount} 张照片 · 默认仅自己可见</small>
+                      <small><Camera size={14} /> {visit.photoCount} 张照片 · {visit.recordVisibility === "shared" ? "这条个人记录已主动共享" : "仅自己可见"}</small>
+                      <button className="text-button" disabled={visit.syncState === "pending" || visit.syncState === "conflict" || !navigator.onLine} onClick={() => setEditingVisit(visit)}>补充个人记录</button>
                     </div>
                   </article>
                 ))}
@@ -279,6 +301,7 @@ export function PlacePage() {
         </Modal>
       )}
       {addingVisit && <VisitDialog sharedCompletion={Boolean(activeMapId)} placeName={placeData.name} visits={placeVisits} onClose={() => setAddingVisit(false)} onReuse={() => setAddingVisit(false)} onSave={async (draft) => { await recordVisit(placeData.id, { mapId: activeMapId, ...draft }); setAddingVisit(false); notify("到访已保存，可继续补照片和记录"); }} />}
+      {editingVisit && <VisitRecordEditor visit={editingVisit} onClose={() => setEditingVisit(undefined)} onSaved={async () => { await refresh().catch(() => notify("记录已保存，列表刷新失败，请重新加载页面")); }} />}
       {toast && <Toast>{toast}</Toast>}
     </div>
   );

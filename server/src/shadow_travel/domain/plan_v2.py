@@ -161,6 +161,16 @@ def check_plan(document, trip):
                 }
             )
     rows.sort(key=lambda row: (row[0], row[1].id))
+    edges = {(a[1].id, b[1].id) for a, b in zip(rows, rows[1:], strict=False)}
+    for segment in document.segments:
+        if (segment.from_stop_id, segment.to_stop_id) not in edges:
+            errors.append(
+                {
+                    "id": segment.id,
+                    "code": "nonadjacent_segment",
+                    "message": "路段端点不是实际时间顺序中的相邻站次，请核对时区和路段",
+                }
+            )
     for reservation in document.reservations:
         if (trip.start_date and reservation.day < trip.start_date) or (
             trip.end_date and reservation.day > trip.end_date
@@ -220,10 +230,28 @@ def upgrade(document):
     doc = PlanDocument.model_validate(document).model_copy(deep=True)
     if doc.schema_version == 2:
         return doc
-    ordered = sorted(doc.stops, key=lambda s: (s.day, s.start, s.id))
+    try:
+        ordered = sorted(
+            doc.stops,
+            key=lambda s: (
+                instant(s.day, s.start, s.timezone or doc.timezone or "UTC", s.fold),
+                s.id,
+            ),
+        )
+    except ValueError:
+        # No inferred target when DST ambiguity makes the original chronology uncertain.
+        ordered = []
+        for stop in doc.stops:
+            if stop.travel_minutes is not None:
+                doc.migration_notes.append(
+                    f"站次 {stop.id} 原出站估计 {stop.travel_minutes} 分钟：时区待核对，未自动连线"
+                )
+            stop.travel_minutes = None
     for i, stop in enumerate(ordered):
         after = ordered[i + 1] if i + 1 < len(ordered) else None
-        if after and after.day == stop.day and after.start != stop.start:
+        if after and instant(
+            after.day, after.start, after.timezone or doc.timezone or "UTC", after.fold
+        ) > instant(stop.day, stop.start, stop.timezone or doc.timezone or "UTC", stop.fold):
             doc.segments.append(
                 Segment(
                     id=f"{stop.id}:{after.id}"[:160],

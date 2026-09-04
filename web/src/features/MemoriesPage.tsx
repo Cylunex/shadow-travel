@@ -89,7 +89,7 @@ export function MemoriesPage() {
         edit ? `memories/${edit.id}` : "memories",
         edit ? "PUT" : "POST",
         {
-          kind: f.get("kind"),
+          kind: edit?.kind || f.get("kind"),
           title: f.get("title"),
           occurred_on: f.get("date"),
           trip_id: f.get("trip") || null,
@@ -272,7 +272,11 @@ export function MemoriesPage() {
           <form className="form-stack" onSubmit={save}>
             <label>
               类型
-              <select name="kind" defaultValue={edit?.kind || "memory"}>
+              <select
+                name="kind"
+                disabled={!!edit}
+                defaultValue={edit?.kind || "memory"}
+              >
                 <option value="memory">私密片段</option>
                 <option value="journey">旅行故事（引用到访与片段）</option>
               </select>
@@ -300,6 +304,12 @@ export function MemoriesPage() {
                 来源旅程
                 <select name="trip" defaultValue={edit?.trip_id || ""}>
                   <option value="">无旅程</option>
+                  {edit?.trip_id &&
+                    !trips.some((t) => t.id === edit.trip_id) && (
+                      <option value={edit.trip_id}>
+                        原旅程（已无访问权，保留来源）
+                      </option>
+                    )}
                   {trips.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.title}

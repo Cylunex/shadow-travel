@@ -251,6 +251,14 @@ def _accessible_place(session: Session, place_id: str, user_id: str) -> TravelPl
     owned = session.get(TravelPlace, place_id)
     if owned is not None and owned.owner_user_id == user_id:
         return owned
+    # Leaving a theme/trip must not hide one's own visit history. This grants facts,
+    # not access to former shared map content or other members' private records.
+    if owned is not None and session.scalar(
+        select(TravelVisit.visit_id).where(
+            TravelVisit.place_id == place_id, TravelVisit.shadow_user_id == user_id
+        ).limit(1)
+    ):
+        return owned
     if owned is not None and place_id in _trip_place_ids(session, user_id):
         return owned
     place = session.scalar(
@@ -283,6 +291,17 @@ def _trip_place_ids(session: Session, user_id: str) -> set[str]:
             approved = session.get(TravelPlanVersion, (plan.trip_id, plan.approved_revision))
             if approved:
                 result.update(approved.document.get("candidates", []))
+    from shadow_travel.infrastructure.models import TravelRun
+
+    bound_versions = session.scalars(
+        select(TravelPlanVersion).join(
+            TravelRun,
+            (TravelRun.trip_id == TravelPlanVersion.trip_id)
+            & (TravelRun.plan_revision == TravelPlanVersion.revision),
+        ).where(TravelRun.trip_id.in_(trip_ids))
+    ).all()
+    for version in bound_versions:
+        result.update(version.document.get("candidates", []))
     return result
 
 
@@ -354,6 +373,9 @@ def workspace(
         ).all()
         place_ids = list(dict.fromkeys(link.place_id for link in links))
         place_ids += sorted(_trip_place_ids(session, user.shadow_user_id))
+        place_ids += list(session.scalars(
+            select(TravelVisit.place_id).where(TravelVisit.shadow_user_id == user.shadow_user_id)
+        ).all())
         place_ids = list(
             dict.fromkeys(
                 place_ids
@@ -1070,8 +1092,11 @@ def update_visit(
             )
             if replay is not None:
                 return {**replay, "replayed": True}
-        visit = session.get(TravelVisit, visit_id)
-        if visit is None or visit.shadow_user_id != user.shadow_user_id:
+        visit = session.scalar(select(TravelVisit).where(
+            TravelVisit.visit_id == visit_id,
+            TravelVisit.shadow_user_id == user.shadow_user_id,
+        ).with_for_update())
+        if visit is None:
             raise HTTPException(status_code=404, detail={"code": "travel_visit_not_found"})
         if body.expected_version is not None and visit.version != body.expected_version:
             current_record = session.scalar(
@@ -1086,6 +1111,10 @@ def update_visit(
             )
         values = body.model_dump(exclude_unset=True)
         values.pop("expected_version", None)
+        if visit.source_map_id and (
+            values.get("record_visibility") == "shared" or values.get("share_completion") is True
+        ):
+            _accessible_map(session, visit.source_map_id, user.shadow_user_id)
         if "visited_on" in values and values["visited_on"] is not None:
             visit.visited_on = values["visited_on"]
         record = session.scalar(

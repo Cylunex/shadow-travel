@@ -397,13 +397,17 @@ test("Plan v2 editor preserves candidate metadata and remains usable on a phone"
   await page.getByRole("button", { name: "预览升级到 Plan v2 草稿" }).click();
   await page.getByText("Plan v2 · 时区与独立路段", { exact: true }).click();
   await page.getByText("候选偏好与备选分组", { exact: true }).click();
-  await page.getByRole("combobox", { name: "优先级", exact: true }).selectOption("must");
+  await page
+    .getByRole("combobox", { name: "优先级", exact: true })
+    .selectOption("must");
   await page.getByLabel("收藏理由", { exact: true }).fill("希望优先安排");
   await page.getByRole("button", { name: /保存草稿/ }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "草稿已保存" }),
   ).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "优先级", exact: true })).toHaveValue("must");
+  await expect(
+    page.getByRole("combobox", { name: "优先级", exact: true }),
+  ).toHaveValue("must");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth + 1,
@@ -455,6 +459,329 @@ test("adding a stop only saves a draft, not a visit", async ({ page }) => {
     page.getByRole("status").filter({ hasText: "草稿已保存" }),
   ).toBeVisible();
   expect(visitsCreated).toBe(0);
+});
+
+test("downloading a pack immediately updates the readiness checklist", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "资料与准备" }).click();
+  await expect(page.locator(".readiness")).toContainText(
+    "本机没有有效旅行副本",
+  );
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "下载旅行副本" }).click();
+  await expect(page.locator(".readiness")).toContainText("本机副本 v1");
+});
+
+test("editing a stop or a memory cannot silently change its identity", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "编辑", exact: true }).first().click();
+  await expect(
+    page.getByRole("dialog").locator('select[name="place"]'),
+  ).toBeDisabled();
+  await page.goto("memories");
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(
+    page.getByRole("dialog").locator('select[name="kind"]'),
+  ).toBeDisabled();
+});
+
+test("retrying trip creation reuses the same client identity", async ({
+  page,
+}) => {
+  await fixtures(page);
+  const bodies: Record<string, unknown>[] = [];
+  await page.route("**/api/browser/v1/trips", async (route) => {
+    bodies.push(route.request().postDataJSON());
+    if (bodies.length === 1) await route.abort("failed");
+    else await route.fulfill({ json: trip });
+  });
+  await page.goto("trips");
+  await page.getByRole("button", { name: "新建旅程", exact: true }).click();
+  await page.getByRole("dialog").locator('[name="title"]').fill("重试旅程");
+  const submit = page
+    .getByRole("dialog")
+    .locator('button[type="submit"], button.primary-button')
+    .last();
+  await submit.click();
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(page).toHaveURL(/trips\/trip1$/);
+  expect(bodies).toHaveLength(2);
+  expect(bodies[0]).toEqual(bodies[1]);
+});
+
+test("retrying a partially saved capture list does not assign new IDs", async ({
+  page,
+}) => {
+  await fixtures(page);
+  const bodies: Record<string, unknown>[] = [];
+  await page.route("**/api/browser/v1/captures", async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    bodies.push(route.request().postDataJSON());
+    if (bodies.length === 2) await route.abort("failed");
+    else await route.fulfill({ json: { id: String(bodies.length) } });
+  });
+  await page.goto("capture");
+  await page.getByRole("button", { name: "收集地点", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .locator('[name="text"]')
+    .fill("第一家\n第二家");
+  await page.getByRole("dialog").locator('[name="split"]').check();
+  const submit = page
+    .getByRole("dialog")
+    .locator("button.primary-button")
+    .last();
+  await submit.click();
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(bodies).toHaveLength(4);
+  expect(bodies[0]).toEqual(bodies[2]);
+  expect(bodies[1]).toEqual(bodies[3]);
+});
+
+test("Plan v2 traffic verification uses the segment mode instead of legacy stop mode", async ({
+  page,
+}) => {
+  await fixtures(page);
+  const abroad = {
+    ...place,
+    countryCode: "JP",
+    coordinate: { ...place.coordinate, reference: "WGS84" },
+  };
+  const doc = {
+    ...document,
+    schema_version: 2,
+    stops: [
+      document.stops[0],
+      { ...document.stops[0], id: "s2", start: "15:00" },
+    ],
+    segments: [
+      {
+        id: "seg",
+        from_stop_id: "s1",
+        to_stop_id: "s2",
+        mode: "driving",
+        manual_minutes: null,
+        note: "",
+      },
+    ],
+  };
+  await page.route("**/workspace", (route) =>
+    route.fulfill({
+      json: {
+        trips: [trip],
+        maps: [],
+        places: [abroad],
+        visits: [],
+        routes: [],
+        members: [],
+      },
+    }),
+  );
+  await page.route("**/trips/trip1/plan", (route) =>
+    route.fulfill({
+      json: {
+        trip,
+        role: "owner",
+        revision: 1,
+        approved_revision: 1,
+        document: doc,
+        places: [abroad],
+        members: [],
+        versions: [{ revision: 1, document: doc }],
+        checks: { errors: [], warnings: [] },
+      },
+    }),
+  );
+  await page.route("**/trips/trip1/run", (route) =>
+    route.fulfill({
+      json: {
+        run: {
+          id: "r",
+          trip_id: "trip1",
+          plan_revision: 1,
+          revision: 1,
+          member_id: "test-user",
+          document: doc,
+          outcomes: [],
+          bindings: [],
+        },
+      },
+    }),
+  );
+  let mode: string | undefined;
+  await page.route("**/maps/routes", (route) => {
+    mode = route.request().postDataJSON().mode;
+    return route.fulfill({
+      json: { points: [], distance_meters: 1000, duration_seconds: 300 },
+    });
+  });
+  await page.goto("trips/trip1");
+  await page.getByRole("button", { name: "旅途中", exact: true }).click();
+  await page.getByText("核验交通与天气 · 按需联网", { exact: true }).click();
+  await page.getByRole("button", { name: "核验到下一站" }).click();
+  await expect(page.locator(".trip-evidence")).toContainText("5 分钟");
+  expect(mode).toBe("driving");
+});
+
+test("route mode and ordering stay unchanged when saving fails", async ({
+  page,
+}) => {
+  await fixtures(page);
+  const places = [place, { ...place, id: "place2", name: "第二站" }];
+  await page.route("**/workspace", (route) =>
+    route.fulfill({
+      json: {
+        trips: [],
+        maps: [],
+        places,
+        visits: [],
+        members: [],
+        routes: [
+          {
+            id: "route1",
+            mapId: "map1",
+            title: "失败回归路线",
+            stopIds: ["place1", "place2"],
+            mode: "driving",
+            note: "",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/browser/v1/routes/route1", (route) =>
+    route.fulfill({ status: 500, json: { detail: { code: "save_failed" } } }),
+  );
+  await page.goto("routes/route1");
+  await expect(page.locator(".mode-switch button.active")).toContainText(
+    "驾车",
+  );
+  await page.getByRole("button", { name: "步行", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "步行", exact: true }),
+  ).toBeEnabled();
+  await expect(page.locator(".mode-switch button.active")).toContainText(
+    "驾车",
+  );
+  await page.getByRole("button", { name: /下移/ }).first().click();
+  await expect(page.locator(".stop-list article").first()).toContainText(
+    "测试·博物馆",
+  );
+});
+
+test("place photos load once per context and uploads require a selected visit", async ({
+  page,
+}) => {
+  await fixtures(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const point = {
+    mapId: "map1",
+    category: "博物馆",
+    tags: [],
+    note: "同行备注",
+    preference: "none",
+    customValues: {},
+    version: 1,
+  };
+  const visit = {
+    id: "visit1",
+    version: 1,
+    placeId: place.id,
+    date: "2026-01-10",
+    displayDate: "01-10",
+    note: "旧记录",
+    photoCount: 0,
+  };
+  let photosLoaded = 0;
+  let patch: Record<string, unknown> | undefined;
+  let uploads: Record<string, unknown> | undefined;
+  await page.route("**/capabilities", (route) =>
+    route.fulfill({ json: { media: true } }),
+  );
+  await page.route("**/workspace", (route) =>
+    route.fulfill({
+      json: {
+        trips: [],
+        maps: [
+          {
+            id: "map1",
+            title: "主题",
+            pointIds: [place.id],
+            members: [],
+            city: "北京",
+            fields: [],
+          },
+        ],
+        places: [{ ...place, mapIds: ["map1"], mapPoints: [point] }],
+        visits: [visit],
+        routes: [],
+        members: [],
+      },
+    }),
+  );
+  await page.route("**/places/place1/photos", (route) => {
+    photosLoaded++;
+    return route.fulfill({ json: { photos: [] } });
+  });
+  await page.route("**/api/browser/v1/visits/visit1", (route) => {
+    patch = route.request().postDataJSON();
+    return route.fulfill({ json: { ...visit, ...patch, version: 2 } });
+  });
+  await page.route("**/places/place1/photos/uploads", (route) => {
+    uploads = route.request().postDataJSON();
+    return route.fulfill({
+      status: 503,
+      json: { detail: { code: "media_unavailable" } },
+    });
+  });
+  await page.goto("maps/map1/places/place1");
+  await expect(page.getByRole("heading", { name: place.name })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "上传照片", exact: true }),
+  ).toBeDisabled();
+  await expect.poll(() => photosLoaded).toBe(1);
+  await page.getByRole("button", { name: "补充个人记录", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("textbox", { name: "个人记录", exact: true })
+    .fill("补充文字");
+  await page.getByRole("button", { name: "保存个人记录", exact: true }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(patch).toEqual({
+    note: "补充文字",
+    rating: null,
+    expected_version: 1,
+  });
+  await page.getByLabel("照片所属到访", { exact: true }).selectOption("visit1");
+  await expect(
+    page.getByRole("button", { name: "上传照片", exact: true }),
+  ).toBeEnabled();
+  await page
+    .locator('input[type="file"]')
+    .setInputFiles({
+      name: "photo.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("test-image"),
+    });
+  await expect.poll(() => uploads?.visit_id).toBe("visit1");
+  await expect(
+    page.getByRole("button", { name: "上传照片", exact: true }),
+  ).toBeEnabled();
+  expect(photosLoaded).toBe(1);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  ).toBeTruthy();
 });
 
 test.describe("offline cold start", () => {

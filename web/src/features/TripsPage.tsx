@@ -15,6 +15,7 @@ export function TripsPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [creationId, setCreationId] = useState(() => stableClientId("trip"));
   useEffect(() => {
     tripList()
       .then(setTrips)
@@ -27,7 +28,7 @@ export function TripsPage() {
     const data = new FormData(event.currentTarget);
     try {
       const trip = await api<Trip>("trips", "POST", {
-        client_record_id: stableClientId("trip"),
+        client_record_id: creationId,
         title: data.get("title"),
         start_date: data.get("start") || null,
         end_date: data.get("end") || null,
@@ -51,7 +52,10 @@ export function TripsPage() {
         </div>
         <button
           className="primary-button"
-          onClick={() => setAdding(true)}
+          onClick={() => {
+            setCreationId(stableClientId("trip"));
+            setAdding(true);
+          }}
           disabled={!navigator.onLine}
         >
           <Plus size={17} />
