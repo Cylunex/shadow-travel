@@ -285,3 +285,39 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(
         assert committed.status_code == 200, committed.text
         assert committed.json()["state"] == "committed"
         assert committed.json()["receipt"].startswith("shadow://travel/")
+
+        command = {
+            "protocol": "shadow.command.v1",
+            "command_id": "cmd_travel_direct_places_0001",
+            "capability_ref": "shadow://capabilities/shadow-travel/travel-primary/travel.drafts.review",
+            "operation_id": "execute_nexus_travel_command",
+            "schema_version": 1,
+            "arguments": {
+                "intent": "travel.place-list",
+                "summary": "补充同一旅行地点",
+                "fields": {
+                    "mapId": "map-example",
+                    "draftType": "place-list",
+                    "title": "补充同一旅行地点",
+                    "payload": {"points": [{"place_id": "place-example"}]},
+                },
+                "source_text": "补充测试地点",
+                "source_refs": [],
+            },
+            "target_refs": ["shadow://travel/maps/map-example"],
+            "source_refs": [],
+        }
+        direct = client.post(
+            "/api/machine/v1/agent/nexus/commands", headers=headers, json=command
+        )
+        replay = client.post(
+            "/api/machine/v1/agent/nexus/commands", headers=headers, json=command
+        )
+        assert direct.status_code == replay.status_code == 200
+        assert direct.json()["status"] == "committed"
+        assert direct.json()["replayed"] is False
+        assert replay.json() == {**direct.json(), "replayed": True}
+        assert direct.json()["resource_ref"].startswith("shadow://travel/")
+        assert direct.json()["receipt_ref"] == (
+            "shadow://travel/operations/cmd_travel_direct_places_0001"
+        )

@@ -20,8 +20,8 @@ surfaces:
         - { id: visits, label: 到访, value_pointer: /summary/visits, unit: 次, tone: good }
   - id: capture
     type: capture
-    capability: travel.drafts.create
-    operation_id: create_nexus_travel_review
+    capability: travel.drafts.review
+    operation_id: execute_nexus_travel_command
     risk_level: L2
     intent_prefixes: [travel.route, travel.place-list, travel.map-notes]
   - id: review

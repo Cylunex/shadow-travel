@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
@@ -52,6 +52,19 @@ class NexusReviewCreate(BaseModel):
     summary: str = Field(min_length=1, max_length=500)
     fields: dict[str, object]
     source_text: str = Field(default="", max_length=4000)
+    source_refs: list[str] = Field(default_factory=list, max_length=16)
+
+
+class NexusTravelCommand(BaseModel):
+    protocol: Literal["shadow.command.v1"]
+    command_id: str = Field(pattern=r"^cmd_[A-Za-z0-9_-]{8,128}$")
+    capability_ref: str = Field(
+        pattern=r"^shadow://capabilities/.+/travel\.drafts\.review$"
+    )
+    operation_id: Literal["execute_nexus_travel_command"]
+    schema_version: Literal[1]
+    arguments: NexusReviewCreate
+    target_refs: list[str] = Field(default_factory=list, max_length=16)
     source_refs: list[str] = Field(default_factory=list, max_length=16)
 
 
@@ -392,6 +405,48 @@ def create_nexus_travel_review(
         if draft is None:
             raise HTTPException(status_code=500, detail={"code": "nexus_review_missing"})
         return _travel_review_envelope(draft, request.state.request_id)
+
+
+@router.post("/agent/nexus/commands", operation_id="execute_nexus_travel_command")
+def execute_nexus_travel_command(
+    command: NexusTravelCommand,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, object]:
+    """Apply one ordinary private map change under the caller's current intent."""
+    require_agent(request, authorization, scope="travel.drafts.review")
+    review = create_nexus_travel_review(
+        command.arguments, request, authorization, command.command_id
+    )
+    review_id = str(review["review_id"])
+    with request.app.state.database.session_factory() as session:
+        draft = session.get(TravelAgentDraft, review_id)
+        if draft is None:
+            raise HTTPException(status_code=500, detail={"code": "nexus_command_missing"})
+        replayed = draft.status == "applied"
+    committed = commit_nexus_travel_review(review_id, request, authorization)
+    receipt = committed.get("receipt")
+    if not isinstance(receipt, str) or not receipt.startswith("shadow://"):
+        raise HTTPException(status_code=502, detail={"code": "invalid_execution_receipt"})
+    with request.app.state.database.session_factory() as session:
+        applied = session.get(TravelAgentDraft, review_id)
+        if applied is None or applied.reviewed_at is None:
+            raise HTTPException(status_code=502, detail={"code": "invalid_execution_receipt"})
+        completed_at = _aware(applied.reviewed_at).isoformat()
+    return {
+        "protocol": "shadow.execution-result.v1",
+        "command_id": command.command_id,
+        "capability_ref": command.capability_ref,
+        "operation_id": command.operation_id,
+        "status": "committed",
+        "result_kind": "record",
+        "resource_ref": receipt,
+        "receipt_ref": f"shadow://travel/operations/{command.command_id}",
+        "completed_at": completed_at,
+        "replayed": replayed,
+        "summary": "旅行内容已保存。",
+        "fields": committed.get("fields", {}),
+    }
 
 
 @router.get("/agent/nexus/reviews", operation_id="list_nexus_travel_reviews")

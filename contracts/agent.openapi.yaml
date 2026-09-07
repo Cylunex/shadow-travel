@@ -5,6 +5,21 @@ info:
 servers:
   - url: https://travel.example.com
 paths:
+  /api/machine/v1/agent/nexus/commands:
+    post:
+      operationId: execute_nexus_travel_command
+      summary: Apply one ordinary private Travel map change under the current user intent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Strict execution receipt for the committed Travel content
+          content:
+            application/json:
+              schema: { type: object }
   /api/machine/v1/agent/summary:
     get:
       operationId: get_travel_agent_summary

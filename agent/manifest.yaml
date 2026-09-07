@@ -96,10 +96,21 @@ capabilities:
     resource_grant_required: true
     idempotency_required: true
   - id: travel.drafts.review
-    summary: 由 Nexus Host 汇总、确认或退回同一 Agent 创建的旅行草稿
+    summary: 按用户当前意图直接保存普通私有旅行内容，并保留可核对回执
     audience: travel
     scopes: [travel.drafts.review]
     tools:
+      - name: travel.drafts.execute
+        transport: http
+        contract_ref: contracts/agent.openapi.yaml
+        operation_id: execute_nexus_travel_command
+        exposure: hidden
+        result_mode: reference
+        max_result_bytes: 16384
+        max_model_chars: 1200
+        timeout_ms: 15000
+        concurrency_safe: false
+        retry_policy: idempotent
       - name: travel.nexus.review.list
         transport: http
         contract_ref: contracts/agent.openapi.yaml
@@ -140,6 +151,13 @@ capabilities:
     reversible: true
     resource_grant_required: true
     idempotency_required: true
+    execution:
+      interaction: direct
+      effect_scope: private
+      reversibility: correctable
+      result_kind: record
+      authorization_mode: current_intent
+      idempotency_window_seconds: 86400
   - id: travel.trips.read
     summary: 读取已明确授权的旅程与出发检查；不包含私人到访或照片
     audience: travel
