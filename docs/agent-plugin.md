@@ -1,5 +1,7 @@
 # Travel Agent Plugin
 
+> 2026-09-07 设计衔接：统一鉴权、Agent 与 Nexus 目标规范以 [本项目接入设计](nexus-integration-design.md) 为准。不再新增领域自管 OIDC/Session、Agent registry/Grant/审批中心或模型/工具通用循环；普通明确写入采用中央 current_intent。以下相关条目仅描述旧实现/历史阶段，不能作为新增实现继续复制；未迁移接口仍保留当前安全限制。
+
 Travel 拥有地图、地点、Trip、计划、授权和提案数据。Shadow Plugin 声明远程 HTTP 能力，
 不包含新的 Harness 或 Agent 框架依赖。只有明确授权的数据才可被机器读取。
 

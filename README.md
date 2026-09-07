@@ -54,3 +54,5 @@ npm run dev
 - [本轮实现与验收边界](docs/lifecycle-implementation.md)
 - [Agent v2 调研、改造与集成边界](docs/agent-v2-plan-2026-09-04.md)
 - [Agent Plugin 接入](docs/agent-plugin.md)
+
+- [统一鉴权、Agent 与 Nexus 接入设计（目标方案，尚未实现）](docs/nexus-integration-design.md)
