@@ -126,6 +126,18 @@ def nexus_command(grant, command_id="cmd_trip_direct_create_0001"):
     }
 
 
+def test_summary_advertises_current_intent_direct_write(env):
+    owner, _, _, grant, headers = env
+    response = owner.get(f"{M}/summary", headers=headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["grants"][0]["id"] == grant["id"]
+    assert payload["machine_commit_supported"] is True
+    assert payload["confirmation_mode"] == "current_intent_for_private_content"
+    assert "execute_current_intent" in payload["workflow"]
+    assert payload["legacy_proposal_confirmation_mode"] == "travel_browser_session"
+
+
 def test_nexus_direct_trip_create_is_atomic_idempotent_and_unapproved(env):
     owner, _, _, grant, headers = env
     command = nexus_command(grant)

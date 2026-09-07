@@ -14,9 +14,12 @@ description: 在最小授权上下文中读取地图、旅程和预订摘要，�
 
 ## 旅程工作流
 
-1. travel.trips.summary 获取显式资源授权及运行边界；按 next_offset 翻页。
-   地图授权不代表旅程授权。没有 grant 时请用户到 Travel「Agent 审核与授权」授权。
-2. travel.trips.list(grant_id) 查找同日期旅程，避免重复创建。多个 Owner 或相似旅程时先询问。
+1. travel.trips.summary 获取显式资源授权及运行边界；按 next_offset 翻页。普通私人记录优先复用
+   唯一有效的 workspace/trip grant，不要求用户为每次记录重复授权。若返回
+   `machine_scope_forbidden`、能力未部署或完全没有 grant，应报告运行配置缺口，不能把它伪装成
+   用户尚未同意，也不能跳到 Travel 的旧授权页制造重复授权。
+2. travel.trips.list(grant_id) 查找同日期旅程，避免重复创建。多个 Owner、多个可用 grant 或相似
+   旅程时才询问用户选择。
 3. 修改前 travel.trips.get；单日使用 day 参数。保留 Trip version 和 plan_revision。
    预订需独立 travel.reservations.read scope 与资源授权；不探测无授权预订。
 4. 形成 [类型化命令](references/draft-types.md)，说明 inferred 和 uncertainties。

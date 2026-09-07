@@ -2,7 +2,7 @@ apiVersion: shadow.cylunex/v1alpha1
 kind: ShadowDomainPlugin
 metadata:
   id: shadow-travel
-  version: 0.1.0
+  version: 0.1.1
   display_name: Shadow Travel
   description: 以最小披露方式提供地图、旅程读取与类型化提案，正式变更由用户审核
 spec:

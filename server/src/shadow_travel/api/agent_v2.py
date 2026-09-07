@@ -167,11 +167,15 @@ def summary(request: Request, authorization: Auth = None, offset: int = Query(0,
             "next_offset": offset + 20 if len(grants) > 20 else None,
             "recent_trips": recent,
             "recent_trips_partial": True,
-            "workflow": ["read", "check", "propose", "owner_browser_review", "readback"],
-            "confirmation_mode": "travel_browser_session",
-            "machine_commit_supported": False,
+            "workflow": ["read", "check", "execute_current_intent", "readback"],
+            "confirmation_mode": "current_intent_for_private_content",
+            "machine_commit_supported": True,
+            "legacy_proposal_confirmation_mode": "travel_browser_session",
             "external_references_verified": False,
-            "notice": "先选择明确授权，再读取旅程；不从地图权限推导私人旅行信息。",
+            "notice": (
+                "先选择明确授权，再读取旅程；普通私人 Trip 与预约摘要可按当前意图直写，"
+                "旧 Proposal 路径仍需浏览器审核；不从地图权限推导私人旅行信息。"
+            ),
         }
 
 

@@ -1,10 +1,10 @@
 version: 2
 app_id: travel
-package_version: 0.1.0
+package_version: 0.1.1
 skills:
   - id: travel-planning
     path: skills/travel-planning/SKILL.md
-    summary: 摘要优先读取授权地图与旅程，提出待真实用户确认的旅程、站次和预订变更
+    summary: 读取授权地图与旅程，并按当前意图保存普通私人旅程及交通住宿摘要
     capabilities:
       - travel.maps.read
       - travel.drafts.create

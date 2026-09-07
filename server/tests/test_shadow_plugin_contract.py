@@ -84,7 +84,7 @@ def test_shadow_plugin_contract_matches_travel_machine_routes(settings_factory) 
     actual_routes = _application_routes(app)
 
     assert plugin.plugin_id == "shadow-travel"
-    assert plugin.version == "0.1.0"
+    assert plugin.version == "0.1.1"
     assert declared_routes <= actual_routes
     assert {item["id"] for item in plugin.agent_manifest["capabilities"]} == {
         "travel.maps.read",
