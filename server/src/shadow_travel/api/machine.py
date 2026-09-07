@@ -414,6 +414,9 @@ def execute_nexus_travel_command(
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
     """Apply one ordinary private map change under the caller's current intent."""
+    draft_type = str(command.arguments.fields.get("draftType") or "map-notes")
+    if command.arguments.intent != f"travel.{draft_type}":
+        raise HTTPException(status_code=422, detail={"code": "invalid_nexus_command"})
     require_agent(request, authorization, scope="travel.drafts.review")
     review = create_nexus_travel_review(
         command.arguments, request, authorization, command.command_id

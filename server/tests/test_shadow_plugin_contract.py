@@ -313,7 +313,17 @@ def test_standard_nexus_review_protocol_creates_lists_and_commits(
         replay = client.post(
             "/api/machine/v1/agent/nexus/commands", headers=headers, json=command
         )
+        mismatched = client.post(
+            "/api/machine/v1/agent/nexus/commands",
+            headers=headers,
+            json={
+                **command,
+                "command_id": "cmd_travel_mismatched_route_0001",
+                "arguments": {**command["arguments"], "intent": "travel.route"},
+            },
+        )
         assert direct.status_code == replay.status_code == 200
+        assert mismatched.status_code == 422
         assert direct.json()["status"] == "committed"
         assert direct.json()["replayed"] is False
         assert replay.json() == {**direct.json(), "replayed": True}
