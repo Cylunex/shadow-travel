@@ -104,6 +104,14 @@ def test_shadow_plugin_contract_matches_travel_machine_routes(settings_factory) 
     }
     assert "create_agent_proposal" in operation_ids
     assert "get_agent_trip" in operation_ids
+    surfaces = yaml.safe_load((ROOT / "contracts" / "surfaces.yaml").read_text("utf-8"))
+    capture = next(item for item in surfaces["surfaces"] if item["id"] == "capture")
+    assert {
+        "travel.trip.create",
+        "travel.trip.update",
+        "travel.reservation.note.upsert",
+        "travel.reservation.note.remove",
+    } <= set(capture["intent_prefixes"])
 
 
 def test_shadow_plugin_tools_execute_against_the_declared_machine_api(

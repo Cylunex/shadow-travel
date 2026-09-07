@@ -23,7 +23,14 @@ surfaces:
     capability: travel.drafts.review
     operation_id: execute_nexus_travel_command
     risk_level: L2
-    intent_prefixes: [travel.route, travel.place-list, travel.map-notes]
+    intent_prefixes:
+      - travel.route
+      - travel.place-list
+      - travel.map-notes
+      - travel.trip.create
+      - travel.trip.update
+      - travel.reservation.note.upsert
+      - travel.reservation.note.remove
   - id: review
     type: review
     capability: travel.drafts.review
