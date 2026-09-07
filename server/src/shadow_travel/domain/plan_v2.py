@@ -44,10 +44,19 @@ class Reservation(StrictModel):
     kind: Literal["stay", "transport", "ticket", "other"] = "other"
     note: str = Field(default="", max_length=2000)
     source_ref: str | None = Field(
-        default=None, pattern=r"^shadow://(?:asset|archive)/", max_length=500
+        default=None, pattern=r"^shadow://(?:asset|archive|ledger)/", max_length=500
     )
+    reference_verification: Literal["unverified"] | None = None
     timezone: str | None = Field(default=None, max_length=64)
     fold: Literal[0, 1] | None = None
+
+    @model_validator(mode="after")
+    def mark_external_reference_unverified(self):
+        if self.source_ref:
+            self.reference_verification = "unverified"
+        elif self.reference_verification is not None:
+            raise ValueError("reference_verification requires source_ref")
+        return self
 
 
 class Task(StrictModel):

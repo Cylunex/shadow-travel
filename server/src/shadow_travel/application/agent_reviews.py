@@ -60,7 +60,7 @@ def grant_trip(session, grant, trip_id, *, lock=False):
     return owned_trip(session, trip_id, grant.owner_user_id, lock=lock)
 
 
-def project(session, grant, proposal: Proposal):
+def project(session, grant, proposal: Proposal, *, allow_unverified_external_references=False):
     """Apply to copies, never ORM entities; return a diff and deterministic checks."""
     if proposal.trip_id:
         trip = grant_trip(session, grant, proposal.trip_id, lock=True)
@@ -149,14 +149,21 @@ def project(session, grant, proposal: Proposal):
             before = next((r for r in document["reservations"] if r["id"] == key), None)
             if op == "REMOVE_RESERVATION" and before is None:
                 raise HTTPException(404, detail={"code": "reservation_not_in_trip"})
-            if op == "UPSERT_RESERVATION" and operation.reservation.source_ref:
+            if (
+                op == "UPSERT_RESERVATION"
+                and operation.reservation.source_ref
+                and not allow_unverified_external_references
+            ):
                 # No cross-service read authority in this project. Do not silently trust references.
                 raise HTTPException(
                     422, detail={"code": "external_reference_verification_unavailable"}
                 )
             document["reservations"] = [r for r in document["reservations"] if r["id"] != key]
             if op == "UPSERT_RESERVATION":
-                document["reservations"].append(operation.reservation.model_dump(mode="json"))
+                reservation = operation.reservation.model_dump(mode="json")
+                if operation.reservation.source_ref:
+                    reservation["reference_verification"] = "unverified"
+                document["reservations"].append(reservation)
         changes.append({"op": op, "before": before, "after": after})
     if affected:
         # Both incoming and outgoing estimates become stale after a move/add/remove.
@@ -247,3 +254,53 @@ def commit_review(session, review, grant):
         "changeset_hash": revision.changeset_hash,
     }
     return revision_payload(session, review)
+
+
+def commit_direct_proposal(session, grant, proposal, client_record_id, request_hash):
+    """Commit an ordinary Nexus Trip change without manufacturing a browser review."""
+    fields, document, preview = project(
+        session,
+        grant,
+        proposal,
+        allow_unverified_external_references=True,
+    )
+    if preview["checks"]["errors"]:
+        raise HTTPException(422, detail={"code": "plan_hard_conflicts", **preview["checks"]})
+    if proposal.trip_id:
+        trip = grant_trip(session, grant, proposal.trip_id, lock=True)
+        if any(operation.op == "UPDATE_TRIP" for operation in proposal.operations):
+            update_trip_record(session, trip, fields, proposal.expected_trip_version)
+    else:
+        trip = create_trip_record(
+            session,
+            grant.owner_user_id,
+            fields,
+            client_record_id,
+            request_hash,
+        )
+    plan_changed = not proposal.trip_id or any(
+        operation.op != "UPDATE_TRIP" for operation in proposal.operations
+    )
+    if plan_changed:
+        save_plan_record(
+            session,
+            trip,
+            grant.owner_user_id,
+            document,
+            proposal.expected_plan_revision,
+        )
+    session.refresh(trip)
+    plan = session.get(TravelPlan, trip.trip_id)
+    return {
+        "resource_uri": f"shadow://travel/trips/{trip.trip_id}",
+        "trip_id": trip.trip_id,
+        "trip_version": trip.version,
+        "plan_revision": plan.revision if plan else 0,
+        "approved_plan_changed": False,
+        "reference_verification": "unverified"
+        if any(
+            operation.op == "UPSERT_RESERVATION" and operation.reservation.source_ref
+            for operation in proposal.operations
+        )
+        else None,
+    }

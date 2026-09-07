@@ -1,6 +1,6 @@
 # Travel 接入 Nexus 的详细设计
 
-设计版本：2026-09-07 / UA-1。状态：目标设计，尚未实现。公共身份、鉴权、Agent、模型、命令与回执以 [Platform 统一规范](https://github.com/Cylunex/shadow-platform/blob/main/docs/nexus-unified-access-design.md) 为准；本文仅定义本领域差异。旧接口安全限制在对应能力通过迁移验收前继续生效。
+设计版本：2026-09-07 / UA-1。状态：分阶段实现。普通 Trip 创建/更新与预约摘要增删已接入统一命令；中央 Principal/Grant 迁移、完整 Plan/Visit 命令仍按本设计推进。公共身份、鉴权、Agent、模型、命令与回执以 [Platform 统一规范](https://github.com/Cylunex/shadow-platform/blob/main/docs/nexus-unified-access-design.md) 为准；本文仅定义本领域差异。旧接口安全限制在对应能力通过迁移验收前继续生效。
 
 ## 1. 实现基线与所有权
 
@@ -29,7 +29,7 @@ TravelAgentResourceGrant 的有效 Agent 委托迁入中央：exact trip、地�
 | `trip/context/readiness.read` | trip/day/字段范围 | 有界上下文，预约原文需单独披露许可 |
 | `operation.status` | command_id 或领域 receipt ref | 权威状态/实际 Trip/Plan 版本 |
 
-以上为拟议能力拆分，具体 ID 由版本化 Manifest/生成 OpenAPI 定义。参数保持 Pydantic 类型；复用 `Proposal` 的操作词汇与纯投影检查，移除“必须浏览器确认”作为普通计划保存的前置条件，但不移除领域约束。
+`trip.create/update` 与 `reservation.note.upsert/remove` 已由 `execute_nexus_travel_command` 实现，沿用 `travel.drafts.review` 能力以兼容现有 Host；其余为后续能力拆分。参数保持 Pydantic 类型；复用 `Proposal` 的操作词汇与纯投影检查，移除“必须浏览器确认”作为普通计划保存的前置条件，但不移除领域约束。
 
 ## 4. 事务、版本与执行语义
 
@@ -41,7 +41,7 @@ SDK 授权后，领域按原锁顺序读取 Trip/Plan 和相关执行状态，�
 
 ## 5. 外部引用与隐私
 
-当前 v2 预约 `source_ref` 核验不可用即拒绝。目标改为保存 `reference_verification=unverified` 和用户给出的最小摘要；未授权不读取 Ledger/Archive/Asset 内容，未核验信息不变成真实预订事实。阅读资料需中央 Access 分别批准目标域和披露用途；禁止 Token 透传。
+统一命令会把无法跨服务核验的 `source_ref` 保存为 `reference_verification=unverified` 和用户给出的最小摘要；旧提案接口仍拒绝未核验引用。未授权不读取 Ledger/Archive/Asset 内容，未核验信息不变成真实预订事实。阅读资料需中央 Access 分别批准目标域和披露用途；禁止 Token 透传。
 
 Trip 导出/分享只包含用户授权的字段，成员私密 Visit、照片定位和预约个人信息仍由 Travel 按范围投影。普通私人导出与对外分享能力分开，长期共享关系改变使用中央确认，不因存在 export 词一律审核。
 

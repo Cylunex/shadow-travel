@@ -96,11 +96,11 @@ capabilities:
     resource_grant_required: true
     idempotency_required: true
   - id: travel.drafts.review
-    summary: 按用户当前意图直接保存普通私有旅行内容，并保留可核对回执
+    summary: 按用户当前意图直接保存地图、旅程和交通住宿摘要，并保留版本化回执
     audience: travel
     scopes: [travel.drafts.review]
     tools:
-      - name: travel.drafts.execute
+      - name: travel.content.execute
         transport: http
         contract_ref: contracts/agent.openapi.yaml
         operation_id: execute_nexus_travel_command

@@ -19,7 +19,8 @@ from test_travel_lifecycle import ORIGIN, clients, get, post, setup_trip
 
 M = "/api/machine/v1/agent/v2"
 SCOPES = (
-    "travel.trips.read, travel.trips.propose, travel.reservations.read, travel.reservations.propose"
+    "travel.trips.read, travel.trips.propose, travel.reservations.read, "
+    "travel.reservations.propose, travel.drafts.review"
 )
 
 
@@ -75,6 +76,123 @@ def decision(review):
 
 def commit(client, review):
     return post(client, f"agent/reviews/{review['review_id']}/commit", decision(review))
+
+
+def nexus_command(grant, command_id="cmd_trip_direct_create_0001"):
+    return {
+        "protocol": "shadow.command.v1",
+        "command_id": command_id,
+        "capability_ref": (
+            "shadow://capabilities/shadow-travel/travel-primary/travel.drafts.review"
+        ),
+        "operation_id": "execute_nexus_travel_command",
+        "schema_version": 1,
+        "arguments": {
+            "intent": "travel.trip.create",
+            "summary": "记录秦皇岛周末出行",
+            "fields": {
+                "grant_id": grant["id"],
+                "expected_trip_version": 0,
+                "expected_plan_revision": 0,
+                "operations": [
+                    {
+                        "op": "CREATE_TRIP",
+                        "trip": {
+                            "title": "秦皇岛周末出行",
+                            "start_date": "2026-09-05",
+                            "end_date": "2026-09-06",
+                            "timezone": "Asia/Shanghai",
+                            "status": "planned",
+                        },
+                    },
+                    {
+                        "op": "UPSERT_RESERVATION",
+                        "reservation": {
+                            "id": "train-outbound",
+                            "title": "G7875 北京通州至秦皇岛",
+                            "day": "2026-09-05",
+                            "time": "08:00",
+                            "kind": "transport",
+                            "note": "09:30 到达，二等座 06车16D号",
+                            "source_ref": "shadow://ledger/records/train-outbound",
+                        },
+                    },
+                ],
+            },
+            "source_refs": ["shadow://ledger/records/train-outbound"],
+        },
+        "target_refs": [],
+        "source_refs": ["shadow://ledger/records/train-outbound"],
+    }
+
+
+def test_nexus_direct_trip_create_is_atomic_idempotent_and_unapproved(env):
+    owner, _, _, grant, headers = env
+    command = nexus_command(grant)
+    path = "/api/machine/v1/agent/nexus/commands"
+    created = owner.post(path, headers=headers, json=command)
+    replay = owner.post(path, headers=headers, json=command)
+    assert created.status_code == replay.status_code == 200, created.text
+    result = created.json()
+    assert result["status"] == "committed" and result["replayed"] is False
+    assert replay.json() == {**result, "replayed": True}
+    assert result["fields"]["trip_version"] == result["fields"]["plan_revision"] == 1
+    assert result["fields"]["approved_plan_changed"] is False
+    assert result["fields"]["reference_verification"] == "unverified"
+    trip_id = result["fields"]["trip_id"]
+    plan = get(owner, f"trips/{trip_id}/plan").json()
+    assert plan["approved_revision"] is None
+    assert plan["document"]["reservations"] == [
+        {
+            "id": "train-outbound",
+            "title": "G7875 北京通州至秦皇岛",
+            "day": "2026-09-05",
+            "time": "08:00",
+            "kind": "transport",
+            "note": "09:30 到达，二等座 06车16D号",
+            "source_ref": "shadow://ledger/records/train-outbound",
+            "reference_verification": "unverified",
+            "timezone": None,
+            "fold": None,
+        }
+    ]
+    update = copy.deepcopy(command)
+    update["command_id"] = "cmd_trip_direct_update_0001"
+    update["arguments"]["intent"] = "travel.trip.update"
+    update["arguments"]["summary"] = "更新旅程标题"
+    update["arguments"]["fields"] = {
+        "grant_id": grant["id"],
+        "trip_id": trip_id,
+        "expected_trip_version": 1,
+        "expected_plan_revision": 1,
+        "operations": [
+            {
+                "op": "UPDATE_TRIP",
+                "trip": {
+                    "title": "秦皇岛两日游",
+                    "start_date": "2026-09-05",
+                    "end_date": "2026-09-06",
+                    "timezone": "Asia/Shanghai",
+                    "status": "planned",
+                },
+            }
+        ],
+    }
+    updated = owner.post(path, headers=headers, json=update)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["fields"]["trip_version"] == 2
+    assert updated.json()["fields"]["plan_revision"] == 1
+    assert get(owner, "trips").json()["trips"][0]["title"] == "秦皇岛两日游"
+    changed = copy.deepcopy(command)
+    changed["arguments"]["summary"] = "复用命令但改了内容"
+    assert owner.post(path, headers=headers, json=changed).status_code == 409
+    with owner.app.state.database.session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(TravelTrip)) == 1
+        assert session.scalar(select(func.count()).select_from(TravelPlanVersion)) == 0
+        audit = session.scalar(
+            select(AuditEvent).where(AuditEvent.action == "travel.nexus.trip.commit")
+        )
+        assert audit.actor_id == "travel-helper" and audit.resource_id == trip_id
 
 
 def test_create_approval_is_atomic_idempotent_and_machine_cannot_commit(env):

@@ -8,7 +8,7 @@ paths:
   /api/machine/v1/agent/nexus/commands:
     post:
       operationId: execute_nexus_travel_command
-      summary: Apply one ordinary private Travel map change under the current user intent
+      summary: Apply one ordinary private Travel map, Trip, or reservation-note change
       requestBody:
         required: true
         content:

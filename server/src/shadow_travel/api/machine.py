@@ -6,11 +6,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from shadow_sdk.agent import AgentIdentity
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
+from shadow_travel.application.agent_reviews import (
+    active_grant,
+    commit_direct_proposal,
+    digest,
+)
+from shadow_travel.domain.agent_changes import Proposal
 from shadow_travel.infrastructure.models import (
     AgentIdempotencyKey,
     AuditEvent,
@@ -116,6 +122,7 @@ def agent_capabilities(
     exposed_scopes = {
         "travel.maps.read": "maps.read",
         "travel.drafts.create": "drafts.create",
+        "travel.drafts.review": "content.execute",
     }
     return {
         "agent_id": identity.agent_id,
@@ -123,7 +130,7 @@ def agent_capabilities(
         "capabilities": [
             capability for scope, capability in exposed_scopes.items() if scope in identity.scopes
         ],
-        "direct_domain_writes": False,
+        "direct_domain_writes": "travel.drafts.review" in identity.scopes,
     }
 
 
@@ -413,7 +420,14 @@ def execute_nexus_travel_command(
     request: Request,
     authorization: Annotated[str | None, Header()] = None,
 ) -> dict[str, object]:
-    """Apply one ordinary private map change under the caller's current intent."""
+    """Apply one ordinary private Travel change under the caller's current intent."""
+    if command.arguments.intent in {
+        "travel.trip.create",
+        "travel.trip.update",
+        "travel.reservation.note.upsert",
+        "travel.reservation.note.remove",
+    }:
+        return _execute_nexus_trip_command(command, request, authorization)
     draft_type = str(command.arguments.fields.get("draftType") or "map-notes")
     if command.arguments.intent != f"travel.{draft_type}":
         raise HTTPException(status_code=422, detail={"code": "invalid_nexus_command"})
@@ -450,6 +464,128 @@ def execute_nexus_travel_command(
         "summary": "旅行内容已保存。",
         "fields": committed.get("fields", {}),
     }
+
+
+def _execute_nexus_trip_command(
+    command: NexusTravelCommand,
+    request: Request,
+    authorization: str | None,
+) -> dict[str, object]:
+    identity = require_agent(request, authorization, scope="travel.drafts.review")
+    fields = dict(command.arguments.fields)
+    if "summary" not in fields:
+        fields["summary"] = command.arguments.summary
+    try:
+        proposal = Proposal.model_validate(fields)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail={"code": "invalid_nexus_trip_command"}) from exc
+    _validate_nexus_trip_intent(command.arguments.intent, proposal)
+    request_hash = digest(command.model_dump(mode="json"))
+    operation = "travel.nexus.trip.command"
+    now = datetime.now(UTC)
+    with request.app.state.database.session_factory() as session, session.begin():
+        grant = active_grant(
+            session,
+            proposal.grant_id,
+            agent_id=identity.agent_id,
+            propose=True,
+            lock=True,
+        )
+        if any(
+            item.op in {"UPSERT_RESERVATION", "REMOVE_RESERVATION"}
+            for item in proposal.operations
+        ) and not grant.allow_reservations:
+            raise HTTPException(status_code=403, detail={"code": "reservation_grant_required"})
+        existing = session.scalar(
+            select(AgentIdempotencyKey).where(
+                AgentIdempotencyKey.agent_id == identity.agent_id,
+                AgentIdempotencyKey.operation == operation,
+                AgentIdempotencyKey.idempotency_key == command.command_id,
+            )
+        )
+        if existing is not None and _aware(existing.expires_at) <= now:
+            session.delete(existing)
+            session.flush()
+            existing = None
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise HTTPException(status_code=409, detail={"code": "idempotency_key_reused"})
+            if existing.response_json is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "idempotency_request_in_progress"},
+                )
+            return {**existing.response_json, "replayed": True}
+        key = AgentIdempotencyKey(
+            agent_id=identity.agent_id,
+            operation=operation,
+            idempotency_key=command.command_id,
+            request_hash=request_hash,
+            expires_at=now + timedelta(days=30),
+        )
+        session.add(key)
+        result = commit_direct_proposal(
+            session,
+            grant,
+            proposal,
+            f"nexus-command:{command.command_id}",
+            request_hash,
+        )
+        response: dict[str, object] = {
+            "protocol": "shadow.execution-result.v1",
+            "command_id": command.command_id,
+            "capability_ref": command.capability_ref,
+            "operation_id": command.operation_id,
+            "status": "committed",
+            "result_kind": "record",
+            "resource_ref": result["resource_uri"],
+            "receipt_ref": f"shadow://travel/operations/{command.command_id}",
+            "completed_at": now.isoformat(),
+            "replayed": False,
+            "summary": "旅程内容已保存。",
+            "fields": {key: value for key, value in result.items() if key != "resource_uri"},
+        }
+        key.status_code = 200
+        key.response_json = response
+        session.add(
+            AuditEvent(
+                actor_type="agent",
+                actor_id=identity.agent_id,
+                owner_app=identity.owner_app,
+                audience=identity.audience,
+                scope="travel.drafts.review",
+                action="travel.nexus.trip.commit",
+                resource_type="travel_trip",
+                resource_id=str(result["trip_id"]),
+                request_id=request.state.request_id,
+                idempotency_key=command.command_id,
+                result="success",
+                details={
+                    "intent": command.arguments.intent,
+                    "trip_version": result["trip_version"],
+                    "plan_revision": result["plan_revision"],
+                },
+            )
+        )
+        return response
+
+
+def _validate_nexus_trip_intent(intent: str, proposal: Proposal) -> None:
+    operations = {operation.op for operation in proposal.operations}
+    allowed = {
+        "travel.trip.create": {"CREATE_TRIP", "UPSERT_RESERVATION"},
+        "travel.trip.update": {"UPDATE_TRIP"},
+        "travel.reservation.note.upsert": {"UPSERT_RESERVATION"},
+        "travel.reservation.note.remove": {"REMOVE_RESERVATION"},
+    }[intent]
+    required = {
+        "travel.trip.create": "CREATE_TRIP",
+        "travel.trip.update": "UPDATE_TRIP",
+        "travel.reservation.note.upsert": "UPSERT_RESERVATION",
+        "travel.reservation.note.remove": "REMOVE_RESERVATION",
+    }[intent]
+    if required not in operations or not operations <= allowed:
+        raise HTTPException(status_code=422, detail={"code": "invalid_nexus_trip_intent"})
 
 
 @router.get("/agent/nexus/reviews", operation_id="list_nexus_travel_reviews")
